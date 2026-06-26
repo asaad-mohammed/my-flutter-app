@@ -25,7 +25,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
   late AnimationController _particlesController;
   late AnimationController _pulseController;
   late AnimationController _imageController;
-  
+
   late Animation<double> _fadeIn;
   late Animation<Offset> _slideUp;
   late Animation<double> _scaleLogo;
@@ -33,6 +33,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
   late Animation<double> _particlesAnimation;
   late Animation<double> _pulseAnimation;
   late Animation<double> _imageFloatAnimation;
+  late Animation<double> _heroImageScale;
 
   @override
   void initState() {
@@ -46,32 +47,32 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     );
-    
+
     _waveController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 4),
     )..repeat(reverse: true);
-    
+
     _particlesController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 3),
     )..repeat();
-    
+
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
-    
+
     _imageController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
-    
+
     _fadeIn = CurvedAnimation(
       parent: _mainController,
       curve: Curves.easeOut,
     );
-    
+
     _slideUp = Tween<Offset>(
       begin: const Offset(0, 0.05),
       end: Offset.zero,
@@ -79,39 +80,46 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
       parent: _mainController,
       curve: Curves.easeOutCubic,
     ));
-    
+
     _scaleLogo = Tween<double>(begin: 0.5, end: 1.0).animate(
       CurvedAnimation(
         parent: _mainController,
         curve: const Interval(0.0, 0.4, curve: Curves.elasticOut),
       ),
     );
-    
+
     _waveAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _waveController,
         curve: Curves.easeInOut,
       ),
     );
-    
+
     _particlesAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _particlesController,
         curve: Curves.linear,
       ),
     );
-    
+
     _pulseAnimation = Tween<double>(begin: 1.0, end: 1.05).animate(
       CurvedAnimation(
         parent: _pulseController,
         curve: Curves.easeInOut,
       ),
     );
-    
+
     _imageFloatAnimation = Tween<double>(begin: 0, end: -10).animate(
       CurvedAnimation(
         parent: _imageController,
         curve: Curves.easeInOut,
+      ),
+    );
+
+    _heroImageScale = Tween<double>(begin: 0.8, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _mainController,
+        curve: const Interval(0.0, 0.5, curve: Curves.easeOutCubic),
       ),
     );
   }
@@ -162,7 +170,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
               particlesAnimation: _particlesAnimation,
               size: size,
             ),
-            
+
             SafeArea(
               child: FadeTransition(
                 opacity: _fadeIn,
@@ -175,7 +183,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
                         isAr: isAr,
                         onLangTap: _toggleLanguage,
                       ),
-                      
+
                       // المحتوى الرئيسي في المنتصف
                       Expanded(
                         child: Center(
@@ -185,59 +193,65 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
                               mainAxisAlignment: MainAxisAlignment.center,
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                // الصورة مع تأثير الطفو والنبض
+                                // الصورة الرئيسية الكبيرة (Hero Image)
                                 AnimatedBuilder(
                                   animation: Listenable.merge([
                                     _imageFloatAnimation,
                                     _pulseAnimation,
+                                    _heroImageScale,
                                   ]),
                                   builder: (_, __) {
                                     return Transform.translate(
                                       offset: Offset(0, _imageFloatAnimation.value),
                                       child: Transform.scale(
-                                        scale: _pulseAnimation.value,
+                                        scale: _heroImageScale.value * _pulseAnimation.value,
                                         child: Container(
-                                          width: 140,
-                                          height: 140,
+                                          width: size.width * 0.85,
+                                          height: size.height * 0.35,
                                           decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
+                                            borderRadius: BorderRadius.circular(24),
                                             boxShadow: [
                                               BoxShadow(
-                                                color: const Color(0xFF0288D1).withValues(alpha: 0.4),
-                                                blurRadius: 25,
+                                                color: const Color(0xFF0288D1).withValues(alpha: 0.3),
+                                                blurRadius: 30,
                                                 spreadRadius: 5,
-                                                offset: const Offset(0, 10),
+                                                offset: const Offset(0, 15),
+                                              ),
+                                              BoxShadow(
+                                                color: Colors.white.withValues(alpha: 0.1),
+                                                blurRadius: 20,
+                                                spreadRadius: 2,
+                                                offset: const Offset(0, -5),
                                               ),
                                             ],
                                           ),
-                                          child: ClipOval(
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(24),
                                             child: Image.asset(
-                                              'images/robot_icon.jpg',
-                                              width: 500,
-                                              height: 500,
+                                              'images/a.png',
                                               fit: BoxFit.cover,
-                                              errorBuilder: (context, error, stackTrace) {
-                                                return Container(
-                                                  width: 500,
-                                                  height: 500,
-                                                  decoration: BoxDecoration(
-                                                    gradient: LinearGradient(
-                                                      colors: [
-                                                        const Color(0xFF0288D1),
-                                                        const Color(0xFF00ACC1),
-                                                      ],
-                                                    ),
-                                                    shape: BoxShape.circle,
+                                              width: double.infinity,
+                                              height: double.infinity,
+                                              errorBuilder: (_, __, ___) => Container(
+                                                decoration: BoxDecoration(
+                                                  gradient: LinearGradient(
+                                                    colors: [
+                                                      const Color(0xFF0288D1),
+                                                      const Color(0xFF4FC3F7),
+                                                    ],
+                                                    begin: Alignment.topLeft,
+                                                    end: Alignment.bottomRight,
                                                   ),
-                                                  child: const Center(
-                                                    child: Icon(
-                                                      Icons.health_and_safety_rounded,
-                                                      color: Colors.white,
-                                                      size: 60,
-                                                    ),
+                                                  borderRadius: BorderRadius.circular(24),
+                                                ),
+                                                child: const Center(
+                                                  child: Icon(
+                                                    Icons.image_not_supported_rounded,
+                                                    color: Colors.white,
+                                                    size: 50,
                                                   ),
-                                                );
-                                              },
+                                                ),
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -245,9 +259,9 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
                                     );
                                   },
                                 ),
-                                
-                                const SizedBox(height: 20),
-                                
+
+                                const SizedBox(height: 16),
+
                                 // الشعار النصي
                                 ScaleTransition(
                                   scale: _scaleLogo,
@@ -293,9 +307,9 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
                                     ],
                                   ),
                                 ),
-                                
-                                const SizedBox(height: 24),
-                                
+
+                                const SizedBox(height: 20),
+
                                 // الإحصائيات
                                 _ModernStatsRow(isAr: isAr),
                               ],
@@ -303,7 +317,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen>
                           ),
                         ),
                       ),
-                      
+
                       // البطاقة السفلية
                       _ModernBottomCard(
                         s: s,
@@ -330,7 +344,7 @@ class _AnimatedGradientBackground extends StatelessWidget {
   final Animation<double> waveAnimation;
   final Animation<double> particlesAnimation;
   final Size size;
-  
+
   const _AnimatedGradientBackground({
     required this.waveAnimation,
     required this.particlesAnimation,
@@ -373,7 +387,7 @@ class _AnimatedGradientBackground extends StatelessWidget {
       },
     );
   }
-  
+
   List<Widget> _buildDecorCircles(Size size) {
     return [
       Positioned(
@@ -413,21 +427,21 @@ class _WavePainter extends CustomPainter {
     final paint = Paint()
       ..color = Colors.white.withValues(alpha: 0.06)
       ..style = PaintingStyle.fill;
-    
+
     final path = Path();
     final waveHeight = size.height * 0.12;
     final startY = size.height * 0.5;
-    
+
     path.moveTo(0, startY);
     for (double x = 0; x <= size.width; x++) {
-      final y = startY + 
+      final y = startY +
           waveHeight * (0.5 + math.sin(x / size.width * math.pi * 2 + progress * math.pi * 2) * 0.5);
       path.lineTo(x, y);
     }
     path.lineTo(size.width, size.height);
     path.lineTo(0, size.height);
     path.close();
-    
+
     canvas.drawPath(path, paint);
   }
 
@@ -444,7 +458,7 @@ class _ParticlesPainter extends CustomPainter {
     final paint = Paint()
       ..color = Colors.white.withValues(alpha: 0.08)
       ..style = PaintingStyle.fill;
-    
+
     for (int i = 0; i < 30; i++) {
       final x = (i * 37) % size.width;
       final y = (i * 23 + progress * 100) % size.height;
@@ -588,7 +602,7 @@ class _ModernStatCard extends StatelessWidget {
   final String value, label;
   final IconData icon;
   final Color color;
-  
+
   const _ModernStatCard({
     required this.value,
     required this.label,
@@ -646,7 +660,7 @@ class _ModernBottomCard extends StatelessWidget {
   final AppStrings s;
   final bool isAr;
   final VoidCallback onLogin, onContact;
-  
+
   const _ModernBottomCard({
     required this.s,
     required this.isAr,
@@ -692,19 +706,19 @@ class _ModernBottomCard extends StatelessWidget {
               ),
             ),
           ),
-          
+
           ..._buildFeatures(),
-          
+
           const SizedBox(height: 16),
-          
+
           _GradientActionButton(
             label: s.login,
             icon: Icons.arrow_forward_rounded,
             onTap: onLogin,
           ),
-          
+
           const SizedBox(height: 12),
-          
+
           RichText(
             textAlign: TextAlign.center,
             text: TextSpan(
@@ -729,9 +743,9 @@ class _ModernBottomCard extends StatelessWidget {
               ],
             ),
           ),
-          
+
           const SizedBox(height: 6),
-          
+
           TextButton.icon(
             onPressed: onContact,
             icon: const Icon(Icons.headset_mic_rounded, size: 14),
@@ -748,7 +762,7 @@ class _ModernBottomCard extends StatelessWidget {
       ),
     );
   }
-  
+
   List<Widget> _buildFeatures() {
     final features = isAr
         ? [
@@ -785,11 +799,11 @@ class _ModernBottomCard extends StatelessWidget {
               color: const Color(0xFF2196F3),
             ),
           ];
-    
+
     return features.map((feature) => Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: feature,
-    )).toList();
+          padding: const EdgeInsets.only(bottom: 8),
+          child: feature,
+        )).toList();
   }
 }
 
@@ -797,7 +811,7 @@ class FeatureItem extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
-  
+
   const FeatureItem({
     super.key,
     required this.icon,
@@ -850,7 +864,7 @@ class _GradientActionButton extends StatefulWidget {
   final String label;
   final IconData icon;
   final VoidCallback onTap;
-  
+
   const _GradientActionButton({
     required this.label,
     required this.icon,

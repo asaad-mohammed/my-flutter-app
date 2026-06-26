@@ -27,14 +27,7 @@ class RatingManager {
     // لا تُظهر إذا قيّم المستخدم مسبقاً
     if (prefs.getBool(_keyRated) == true) return false;
 
-    // فحص التخطي — هل مضت 3 أيام؟
-    final skipMs = prefs.getInt(_keyLastSkip);
-    if (skipMs != null) {
-      final skippedAt = DateTime.fromMillisecondsSinceEpoch(skipMs);
-      if (DateTime.now().difference(skippedAt).inDays < _remindDays) {
-        return false;
-      }
-    }
+   
 
     final count = prefs.getInt(_keyCount) ?? 0;
     return count >= _showAfter;

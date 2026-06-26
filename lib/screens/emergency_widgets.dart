@@ -6,9 +6,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../../core/theme/app_colors.dart';
-import '../../core/data/mock_users.dart';
-import 'shared_widgets.dart';
+import '../core/theme/app_colors.dart';
+import '../core/data/mock_users.dart';
+import 'widgets/shared_widgets.dart';
 
 // ════════════════════════════════════════════════════════
 //  EmergencyHeader — هيدر تبويب الطوارئ

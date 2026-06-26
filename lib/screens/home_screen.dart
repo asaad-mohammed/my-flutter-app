@@ -1,8 +1,5 @@
 // ════════════════════════════════════════════════════════
 //  screens/home_screen.dart
-//  ✅ تبويبات: حسابي | ميزات | رئيسي | خريطة | الزون الصحي
-//  ✅ شريط تنقل (5 عناصر)
-//  ✅ زر SOS عائم
 // ════════════════════════════════════════════════════════
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,9 +8,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/theme/app_colors.dart';
 import '../core/providers/app_providers.dart';
+import '../core/widgets/access_guard.dart';
 import 'widgets/rating_dialog.dart';
 import 'tabs/emergency_tab.dart';
-import 'tabs/features_tab.dart';
+import 'tabs/protection_tab.dart';
 import 'tabs/profile_tab.dart';
 import 'tabs/map_tab.dart';
 import 'tabs/zone_tab.dart';
@@ -32,9 +30,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   late AnimationController _fabCtrl;
   late Animation<double>   _fabScale;
 
+  // مفتاح للوصول إلى AccessGuard من أي مكان داخل هذه الشاشة لطلب
+  // فحص فوري (مثلاً عند تبديل التبويب أو الضغط على SOS).
+  final GlobalKey<AccessGuardState> _guardKey = GlobalKey<AccessGuardState>();
+
   final List<Widget> _pages = [
     const ProfileTab(),   // 0 - حسابي
-    const FeaturesTab(),  // 1 - الميزات
+    const ProtectionTab(),// 1 - الحماية 
     const EmergencyTab(), // 2 - الرئيسي (الطوارئ)
     const MapTab(),       // 3 - الخريطة
     const ZoneTab(),      // 4 - الزون الصحي
@@ -59,43 +61,55 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   void dispose() { _fabCtrl.dispose(); super.dispose(); }
 
+  // طلب فحص فوري من AccessGuard (يُستخدم عند تفاعل مهم مثل تبديل
+  // التبويب أو الضغط على SOS، إضافة للفحص الدوري التلقائي).
+  void _requestImmediateCheck() {
+    _guardKey.currentState?.checkNow();
+  }
+
   @override
   Widget build(BuildContext context) {
     final isAr    = ref.watch(languageProvider);
     final user    = ref.watch(sessionProvider);
     final isGuest = user?.isGuest ?? false;
 
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      extendBody: true,
-      body: Column(children: [
-        if (isGuest)
-          _GuestBanner(
-            isAr: isAr,
-            onLogin: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const LoginScreen())),
-          ),
-        Expanded(child: IndexedStack(index: _tab, children: _pages)),
-      ]),
+    return AccessGuard(
+      key: _guardKey,
+      child: Scaffold(
+        backgroundColor: AppColors.bg,
+        extendBody: true,
+        body: Column(children: [
+          if (isGuest)
+            _GuestBanner(
+              isAr: isAr,
+              onLogin: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const LoginScreen())),
+            ),
+          Expanded(child: IndexedStack(index: _tab, children: _pages)),
+        ]),
 
-      floatingActionButton: _tab != 2  // تغيير إلى 2 (الرئيسي)
-          ? ScaleTransition(
-              scale: _fabScale,
-              child: _SosFAB(isAr: isAr, onTap: () {
-                HapticFeedback.heavyImpact();
-                setState(() => _tab = 2);  // العودة إلى تبويب الطوارئ
-              }),
-            )
-          : null,
+        floatingActionButton: _tab != 2  // تغيير إلى 2 (الرئيسي)
+            ? ScaleTransition(
+                scale: _fabScale,
+                child: _SosFAB(isAr: isAr, onTap: () {
+                  HapticFeedback.heavyImpact();
+                  _requestImmediateCheck(); // فحص فوري قبل فتح الطوارئ
+                  setState(() => _tab = 2);  // العودة إلى تبويب الطوارئ
+                }),
+              )
+            : null,
 
-      bottomNavigationBar: _BottomNav(
-        current: _tab,
-        isAr: isAr,
-        onTap: (i) {
-          if (isGuest && i == 0) { _showGuestDialog(context, isAr); return; }
-          HapticFeedback.selectionClick();
-          setState(() => _tab = i);
-        },
+        bottomNavigationBar: _BottomNav(
+          current: _tab,
+          isAr: isAr,
+          onTap: (i) {
+            if (isGuest && i == 0) { _showGuestDialog(context, isAr); return; }
+            HapticFeedback.selectionClick();
+            _requestImmediateCheck(); // فحص فوري عند فتح أي تبويب
+            setState(() 
+            => _tab = i);
+          },
+        ),
       ),
     );
   }
@@ -153,13 +167,13 @@ class _BottomNav extends StatelessWidget {
         index: 0,
       ),
       _NavItem2(
-        icon: Icons.star_outline_rounded, 
-        activeIcon: Icons.star_rounded,
-        labelAr: 'ميزات', 
-        labelEn: 'Features', 
-        index: 1,
-        activeColor: const Color(0xFFFF6D00),
-      ),
+  icon: Icons.shield_outlined,      // تغيير الأيقونة
+  activeIcon: Icons.shield_rounded,
+  labelAr: 'حماية',                  // تغيير التسمية
+  labelEn: 'Protection',
+  index: 1,
+  activeColor: const Color(0xFF7B1FA2),
+),
       _NavItem2(
         icon: Icons.home_outlined, 
         activeIcon: Icons.home_rounded,

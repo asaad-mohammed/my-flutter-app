@@ -1,20 +1,22 @@
 // lib/screens/tabs/zone_tab.dart
 // ════════════════════════════════════════════════════════
-//  tabs/zone_tab.dart
-//  تبويب تحليل البيئة الصحية - المناطق والمخاطر
-//  ✅ عرض المناطق الصحية في العراق
-//  ✅ تحليل الأمراض المنتشرة مع مؤشرات المخاطر
-//  ✅ تقارير الذكاء الاصطناعي والتوصيات
-//  ✅ مؤشرات بيئية
+//  تبويب الزون الصحي - نظام رصد الحالات المرضية
+//  ✅ عرض الحالات المبلّغة في المنطقة
+//  ✅ خريطة حرارية توضح كثافة الحالات
+//  ✅ زر للإبلاغ عن حالة جديدة
+//  ✅ تحذيرات للمستخدمين عند دخول منطقة خطر
 // ════════════════════════════════════════════════════════
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/providers/app_providers.dart';
-// استيراد zone_provider للأنواع فقط، مع إخفاء zoneProvider لتجنب التعارض
+// استيراد zone_provider مع إخفاء zoneProvider لتجنب التعارض
 import '../../core/providers/zone_provider.dart' hide zoneProvider;
 
 // ════════════════════════════════════════════════════════
@@ -28,16 +30,28 @@ class ZoneTab extends ConsumerStatefulWidget {
 }
 
 class _ZoneTabState extends ConsumerState<ZoneTab> {
-  bool _showFullReport = false;
+  late final MapController _mapController;
+  ReportedCase? _selectedCase;
+  bool _showReportDialog = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _mapController = MapController();
+  }
+
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final isAr = ref.watch(languageProvider);
     final zoneState = ref.watch(zoneProvider);
-    final zones = zoneState.zones;
     final selectedZone = zoneState.selectedZone;
     final isLoading = zoneState.isLoading;
-    final isAnalyzing = zoneState.isAnalyzing;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -58,7 +72,7 @@ class _ZoneTabState extends ConsumerState<ZoneTab> {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: _ZoneSelector(
-                zones: zones,
+                zones: zoneState.zones,
                 selectedId: selectedZone?.id,
                 isAr: isAr,
                 onSelect: (id) => ref.read(zoneProvider.notifier).selectZone(id),
@@ -66,124 +80,95 @@ class _ZoneTabState extends ConsumerState<ZoneTab> {
             ),
           ),
 
-          // ── بطاقة المنطقة المختارة ──
+          // ── بطاقة المخاطر للمنطقة ──
           if (selectedZone != null)
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _ZoneCard(
-                  zone: selectedZone,
+                child: _RiskCard(
+                  zone: selectedZone!,
                   isAr: isAr,
-                  onAnalyze: () async {
-                    HapticFeedback.mediumImpact();
-                    await ref.read(zoneProvider.notifier).analyzeZone(selectedZone.id);
-                    setState(() => _showFullReport = true);
-                    Future.delayed(const Duration(milliseconds: 500), () {
-                      if (mounted) setState(() => _showFullReport = false);
-                    });
-                  },
-                  isAnalyzing: isAnalyzing,
+                  onReport: () => setState(() => _showReportDialog = true),
                 ),
               ),
             ),
 
-          // ── الأمراض المنتشرة ──
-          if (selectedZone != null && selectedZone.diseases.isNotEmpty)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-                child: _SectionTitle(
-                  icon: Icons.sick_rounded,
-                  label: isAr ? 'الأمراض المنتشرة' : 'Diseases Outbreak',
-                  color: AppColors.danger,
-                ),
-              ),
-            ),
-
+          // ── الخريطة الحرارية ──
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _DiseasesList(
-                diseases: selectedZone?.diseases ?? [],
-                isAr: isAr,
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: _SectionTitle(
+                icon: Icons.map_rounded,
+                label: isAr ? 'خريطة الحالات المبلّغة' : 'Reported Cases Map',
+                color: AppColors.primary,
               ),
             ),
           ),
 
-          // ── المؤشرات البيئية ──
-          if (selectedZone != null)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-                child: _SectionTitle(
-                  icon: Icons.thermostat_rounded,
-                  label: isAr ? 'المؤشرات البيئية' : 'Environmental Indicators',
-                  color: AppColors.primary,
-                ),
-              ),
-            ),
-
-          if (selectedZone != null)
-            SliverToBoxAdapter(
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 280,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _EnvironmentalCard(zone: selectedZone, isAr: isAr),
-              ),
-            ),
-
-          // ── تقرير الذكاء الاصطناعي ──
-          if (selectedZone != null && zoneState.reportFor(selectedZone.id) != null)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-                child: _SectionTitle(
-                  icon: Icons.psychology_rounded,
-                  label: isAr ? 'تحليل الذكاء الاصطناعي' : 'AI Analysis',
-                  color: const Color(0xFF6A1B9A),
-                ),
-              ),
-            ),
-
-          if (selectedZone != null)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _AIReportCard(
-                  report: zoneState.reportFor(selectedZone.id),
+                child: _Heatmap(
+                  mapController: _mapController,
+                  cases: selectedZone?.activeCases ?? [],
+                  selectedCase: _selectedCase,
+                  onCaseTap: (c) => setState(() => _selectedCase = c),
                   isAr: isAr,
-                  isExpanded: _showFullReport,
-                  onToggle: () => setState(() => _showFullReport = !_showFullReport),
                 ),
               ),
             ),
+          ),
 
-          // ── التنبيهات ──
-          if (selectedZone != null && selectedZone.alertsAr.isNotEmpty)
+          // ── قائمة الحالات النشطة ──
+          if (selectedZone != null && selectedZone.activeCases.isNotEmpty)
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: _SectionTitle(
                   icon: Icons.warning_amber_rounded,
-                  label: isAr ? 'التنبيهات' : 'Alerts',
-                  color: const Color(0xFFE65100),
+                  label: isAr
+                      ? 'الحالات النشطة (${selectedZone.activeCases.length})'
+                      : 'Active Cases (${selectedZone.activeCases.length})',
+                  color: Colors.red,
                 ),
               ),
             ),
 
-          if (selectedZone != null)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: _AlertsList(
-                  alerts: isAr ? selectedZone.alertsAr : selectedZone.alertsEn,
-                  isAr: isAr,
-                ),
-              ),
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final cases = selectedZone?.activeCases ?? [];
+                if (index >= cases.length) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: _CaseCard(
+                    caseData: cases[index],
+                    isAr: isAr,
+                    onTap: () => setState(() => _selectedCase = cases[index]),
+                    onResolve: () {
+                      ref.read(zoneProvider.notifier).resolveCase(cases[index].id);
+                    },
+                  ),
+                );
+              },
+              childCount: selectedZone?.activeCases.length ?? 0,
             ),
+          ),
 
           const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
       ),
+      floatingActionButton: _showReportDialog
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () => setState(() => _showReportDialog = true),
+              icon: const Icon(Icons.add_alert_rounded),
+              label: Text(isAr ? 'إبلاغ عن حالة' : 'Report Case'),
+              backgroundColor: const Color(0xFFD32F2F),
+              foregroundColor: Colors.white,
+            ),
     );
   }
 }
@@ -228,7 +213,7 @@ class _ZoneHeader extends StatelessWidget {
               color: Colors.white.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.analytics_rounded, color: Colors.white, size: 22),
+            child: const Icon(Icons.health_and_safety_rounded, color: Colors.white, size: 22),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -236,7 +221,7 @@ class _ZoneHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  isAr ? 'تحليل البيئة الصحية' : 'Health Zone Analysis',
+                  isAr ? 'مركز رصد الحالات' : 'Case Monitoring Center',
                   style: GoogleFonts.cairo(
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
@@ -244,7 +229,7 @@ class _ZoneHeader extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  isAr ? 'مراقبة الأمراض والمخاطر في المناطق' : 'Monitor diseases and risks by zone',
+                  isAr ? 'تتبع الحالات المرضية والظواهر الصحية' : 'Track diseases and health incidents',
                   style: GoogleFonts.cairo(fontSize: 11, color: Colors.white70),
                 ),
               ],
@@ -278,7 +263,7 @@ class _ZoneHeader extends StatelessWidget {
 //  _ZoneSelector
 // ════════════════════════════════════════════════════════
 class _ZoneSelector extends StatelessWidget {
-  final List<HealthZone> zones;
+  final List<HealthZoneWithCases> zones;
   final String? selectedId;
   final bool isAr;
   final ValueChanged<String> onSelect;
@@ -301,6 +286,8 @@ class _ZoneSelector extends StatelessWidget {
         itemBuilder: (_, i) {
           final zone = zones[i];
           final isSelected = selectedId == zone.id;
+          final riskColor = zone.getRiskColor();
+
           return GestureDetector(
             onTap: () => onSelect(zone.id),
             child: AnimatedContainer(
@@ -308,15 +295,15 @@ class _ZoneSelector extends StatelessWidget {
               width: 140,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: isSelected ? zone.getStatusColor() : Colors.white,
+                color: isSelected ? riskColor : Colors.white,
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: zone.getStatusColor().withValues(alpha: isSelected ? 0 : 0.3),
+                  color: riskColor.withValues(alpha: isSelected ? 0 : 0.3),
                   width: 1.5,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: (isSelected ? zone.getStatusColor() : Colors.black)
+                    color: (isSelected ? riskColor : Colors.black)
                         .withValues(alpha: isSelected ? 0.25 : 0.05),
                     blurRadius: 8,
                     offset: const Offset(0, 3),
@@ -333,7 +320,7 @@ class _ZoneSelector extends StatelessWidget {
                         height: 8,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: zone.getStatusColor(),
+                          color: riskColor,
                         ),
                       ),
                       const SizedBox(width: 6),
@@ -353,11 +340,11 @@ class _ZoneSelector extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '${zone.activeCases} ${isAr ? 'حالة' : 'cases'}',
+                    '${zone.totalActiveCases} ${isAr ? 'حالة' : 'cases'}',
                     style: GoogleFonts.cairo(
                       fontSize: 20,
                       fontWeight: FontWeight.w900,
-                      color: isSelected ? Colors.white : zone.getStatusColor(),
+                      color: isSelected ? Colors.white : riskColor,
                     ),
                   ),
                   const SizedBox(height: 2),
@@ -379,44 +366,43 @@ class _ZoneSelector extends StatelessWidget {
 }
 
 // ════════════════════════════════════════════════════════
-//  _ZoneCard
+//  _RiskCard - بطاقة المخاطر مع زر الإبلاغ
 // ════════════════════════════════════════════════════════
-class _ZoneCard extends StatelessWidget {
-  final HealthZone zone;
+class _RiskCard extends StatelessWidget {
+  final HealthZoneWithCases zone;
   final bool isAr;
-  final VoidCallback onAnalyze;
-  final bool isAnalyzing;
+  final VoidCallback onReport;
 
-  const _ZoneCard({
+  const _RiskCard({
     required this.zone,
     required this.isAr,
-    required this.onAnalyze,
-    required this.isAnalyzing,
+    required this.onReport,
   });
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = zone.getStatusColor();
-    final isHighRisk = zone.status == ZoneStatus.warning || zone.status == ZoneStatus.danger;
+    final riskColor = zone.getRiskColor();
+    final isDanger = zone.overallRisk == CaseRiskLevel.high ||
+        zone.overallRisk == CaseRiskLevel.critical;
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: isHighRisk
-              ? [statusColor.withValues(alpha: 0.12), Colors.white]
+          colors: isDanger
+              ? [riskColor.withValues(alpha: 0.12), Colors.white]
               : [Colors.white, Colors.white],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: isHighRisk ? statusColor.withValues(alpha: 0.4) : const Color(0xFFE8EDF4),
-          width: isHighRisk ? 1.5 : 0.5,
+          color: isDanger ? riskColor.withValues(alpha: 0.4) : const Color(0xFFE8EDF4),
+          width: isDanger ? 1.5 : 0.5,
         ),
         boxShadow: [
           BoxShadow(
-            color: isHighRisk ? statusColor.withValues(alpha: 0.15) : const Color(0x0A000000),
+            color: isDanger ? riskColor.withValues(alpha: 0.15) : const Color(0x0A000000),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -425,20 +411,20 @@ class _ZoneCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // رأس البطاقة
           Row(
             children: [
               Container(
                 width: 50,
                 height: 50,
                 decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.12),
+                  color: riskColor.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Center(
-                  child: Text(
-                    zone.status == ZoneStatus.safe ? '🛡️' : '⚠️',
-                    style: const TextStyle(fontSize: 24),
+                  child: Icon(
+                    isDanger ? Icons.warning_rounded : Icons.check_circle_rounded,
+                    color: riskColor,
+                    size: 28,
                   ),
                 ),
               ),
@@ -452,11 +438,12 @@ class _ZoneCard extends StatelessWidget {
                       style: GoogleFonts.cairo(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
-                        color: isHighRisk ? statusColor : AppColors.textDark,
+                        color: isDanger ? riskColor : AppColors.textDark,
                       ),
                     ),
                     Text(
-                      '${zone.districtAr} · ${zone.population} ${isAr ? 'نسمة' : 'people'}',
+                      '${zone.totalAffected} ${isAr ? 'مصاب' : 'affected'} · '
+                      '${zone.totalActiveCases} ${isAr ? 'حالة نشطة' : 'active cases'}',
                       style: GoogleFonts.cairo(
                         fontSize: 11,
                         color: AppColors.textGray,
@@ -468,11 +455,11 @@ class _ZoneCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: statusColor,
+                  color: riskColor,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
-                  zone.getStatusLabel(isAr),
+                  zone.getRiskLabel(isAr),
                   style: GoogleFonts.cairo(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
@@ -482,58 +469,59 @@ class _ZoneCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
 
-          // إحصائيات سريعة
+          // إحصاءات سريعة
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _StatItem(
-                label: isAr ? 'الحالات الكلية' : 'Total Cases',
-                value: '${zone.totalCases}',
+                label: isAr ? 'حالات حرجة' : 'Critical',
+                value: '${zone.criticalCases.length}',
+                color: Colors.red,
+              ),
+              _StatItem(
+                label: isAr ? 'إجمالي المصابين' : 'Total Affected',
+                value: '${zone.totalAffected}',
                 color: AppColors.textDark,
               ),
               _StatItem(
-                label: isAr ? 'حالات نشطة' : 'Active Cases',
-                value: '${zone.activeCases}',
-                color: AppColors.danger,
-              ),
-              _StatItem(
-                label: isAr ? 'نسبة النشاط' : 'Activity Rate',
-                value: '${zone.activePercentage.toStringAsFixed(1)}‱',
-                color: AppColors.warning,
+                label: isAr ? 'المصابين/حالة' : 'Avg per case',
+                value: (zone.totalActiveCases > 0)
+                    ? '${(zone.totalAffected / zone.totalActiveCases).toStringAsFixed(1)}'
+                    : '0',
+                color: AppColors.primary,
               ),
             ],
           ),
           const SizedBox(height: 16),
 
-          // زر التحليل
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton.icon(
-              onPressed: isAnalyzing ? null : onAnalyze,
-              icon: isAnalyzing
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.auto_awesome_rounded, size: 18),
-              label: Text(
-                isAnalyzing
-                    ? (isAr ? 'جاري التحليل...' : 'Analyzing...')
-                    : (isAr ? 'تحليل بالذكاء الاصطناعي' : 'AI Analysis'),
-                style: GoogleFonts.cairo(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
+          // زر الإبلاغ
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: onReport,
+                  icon: const Icon(Icons.add_alert_rounded, size: 18),
+                  label: Text(
+                    isAr ? 'الإبلاغ عن حالة جديدة' : 'Report New Case',
+                    style: GoogleFonts.cairo(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFD32F2F),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
                 ),
               ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF6A1B9A),
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-            ),
+            ],
           ),
         ],
       ),
@@ -576,337 +564,187 @@ class _StatItem extends StatelessWidget {
 }
 
 // ════════════════════════════════════════════════════════
-//  _DiseasesList
+//  _Heatmap - الخريطة الحرارية
 // ════════════════════════════════════════════════════════
-class _DiseasesList extends StatelessWidget {
-  final List<TrackedDisease> diseases;
+class _Heatmap extends StatelessWidget {
+  final MapController mapController;
+  final List<ReportedCase> cases;
+  final ReportedCase? selectedCase;
+  final Function(ReportedCase) onCaseTap;
   final bool isAr;
 
-  const _DiseasesList({
-    required this.diseases,
+  const _Heatmap({
+    required this.mapController,
+    required this.cases,
+    required this.selectedCase,
+    required this.onCaseTap,
     required this.isAr,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (diseases.isEmpty) return const SizedBox.shrink();
-    
-    return Column(
-      children: diseases.map((d) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: _DiseaseCard(disease: d, isAr: isAr),
-      )).toList(),
-    );
-  }
-}
-
-class _DiseaseCard extends StatelessWidget {
-  final TrackedDisease disease;
-  final bool isAr;
-
-  const _DiseaseCard({
-    required this.disease,
-    required this.isAr,
-  });
-
-  Color get _riskColor {
-    switch (disease.risk) {
-      case DiseaseRisk.low:
-        return Colors.green;
-      case DiseaseRisk.medium:
-        return Colors.orange;
-      case DiseaseRisk.high:
-        return Colors.deepOrange;
-      case DiseaseRisk.critical:
-        return Colors.red;
-    }
-  }
-
-  String get _riskLabel {
-    switch (disease.risk) {
-      case DiseaseRisk.low:
-        return isAr ? 'منخفض' : 'Low';
-      case DiseaseRisk.medium:
-        return isAr ? 'متوسط' : 'Medium';
-      case DiseaseRisk.high:
-        return isAr ? 'مرتفع' : 'High';
-      case DiseaseRisk.critical:
-        return isAr ? 'حرج' : 'Critical';
-    }
-  }
-
-  String get _trendIcon {
-    switch (disease.trend) {
-      case TrendDir.rising:
-        return '📈';
-      case TrendDir.falling:
-        return '📉';
-      case TrendDir.stable:
-        return '➡️';
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: disease.color.withValues(alpha: 0.2)),
-        boxShadow: const [
-          BoxShadow(color: Color(0x0A000000), blurRadius: 6, offset: Offset(0, 2)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    if (cases.isEmpty) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [BoxShadow(color: Color(0x0A000000), blurRadius: 10)],
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: disease.color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Center(
-                  child: Text(disease.emoji, style: const TextStyle(fontSize: 20)),
+              Icon(Icons.map_rounded, size: 48, color: AppColors.textGray),
+              const SizedBox(height: 8),
+              Text(
+                isAr ? 'لا توجد حالات نشطة' : 'No active cases',
+                style: GoogleFonts.cairo(
+                  fontSize: 14,
+                  color: AppColors.textGray,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isAr ? disease.nameAr : disease.nameEn,
-                      style: GoogleFonts.cairo(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.textDark,
+              const SizedBox(height: 4),
+              Text(
+                isAr ? 'كن أول من يبلّغ عن حالة' : 'Be the first to report',
+                style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textGray),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // حساب المركز لتجميع النقاط
+    final center = cases.fold<LatLng>(
+      LatLng(0, 0),
+      (sum, c) => LatLng(sum.latitude + c.position.latitude, sum.longitude + c.position.longitude),
+    );
+    final avgCenter = LatLng(
+      center.latitude / cases.length,
+      center.longitude / cases.length,
+    );
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: FlutterMap(
+        mapController: mapController,
+        options: MapOptions(
+          initialCenter: avgCenter,
+          initialZoom: 12,
+          minZoom: 4,
+          maxZoom: 18,
+        ),
+        children: [
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'com.ighatha.app',
+            maxZoom: 19,
+          ),
+
+          // ── دوائر الحرارة (Heatmap) ──
+          CircleLayer(
+            circles: cases.map((c) {
+              final intensity = c.intensity.clamp(0.5, 5.0);
+              final radius = 300 * intensity;
+              final opacity = (intensity / 5).clamp(0.1, 0.6);
+
+              return CircleMarker(
+                point: c.position,
+                radius: radius,
+                useRadiusInMeter: true,
+                color: c.color.withValues(alpha: opacity * 0.4),
+                borderColor: c.color.withValues(alpha: opacity * 0.8),
+                borderStrokeWidth: 1.5,
+              );
+            }).toList(),
+          ),
+
+          // ── علامات الحالات ──
+          MarkerLayer(
+            markers: cases.map((c) {
+              final isSelected = selectedCase?.id == c.id;
+              return Marker(
+                point: c.position,
+                width: isSelected ? 50 : 40,
+                height: isSelected ? 50 : 40,
+                child: GestureDetector(
+                  onTap: () => onCaseTap(c),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: isSelected ? 50 : 40,
+                    height: isSelected ? 50 : 40,
+                    decoration: BoxDecoration(
+                      color: c.color,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white,
+                        width: isSelected ? 3 : 2,
                       ),
-                    ),
-                    Row(
-                      children: [
-                        Text(
-                          '${disease.casesCount} ${isAr ? 'حالة' : 'cases'}',
-                          style: GoogleFonts.cairo(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: disease.color,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          '${disease.casesChange > 0 ? '+' : ''}${disease.casesChange}',
-                          style: GoogleFonts.cairo(
-                            fontSize: 11,
-                            color: disease.casesChange > 0 ? Colors.red : Colors.green,
-                          ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: c.color.withValues(alpha: isSelected ? 0.6 : 0.3),
+                          blurRadius: isSelected ? 20 : 10,
+                          offset: const Offset(0, 3),
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: _riskColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(_trendIcon, style: const TextStyle(fontSize: 10)),
-                    const SizedBox(width: 4),
-                    Text(
-                      _riskLabel,
-                      style: GoogleFonts.cairo(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: _riskColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          // الأعراض
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: (isAr ? disease.symptomsAr : disease.symptomsEn).map((s) => Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                s,
-                style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textGray),
-              ),
-            )).toList(),
-          ),
-          const SizedBox(height: 8),
-          // الإجراءات الوقائية
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: (isAr ? disease.preventionAr : disease.preventionEn).map((p) => Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: disease.color.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: disease.color.withValues(alpha: 0.2)),
-              ),
-              child: Text(
-                p,
-                style: GoogleFonts.cairo(fontSize: 10, color: disease.color),
-              ),
-            )).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ════════════════════════════════════════════════════════
-//  _EnvironmentalCard
-// ════════════════════════════════════════════════════════
-class _EnvironmentalCard extends StatelessWidget {
-  final HealthZone zone;
-  final bool isAr;
-
-  const _EnvironmentalCard({
-    required this.zone,
-    required this.isAr,
-  });
-
-  Color _getAirQualityColor(double aqi) {
-    if (aqi < 50) return Colors.green;
-    if (aqi < 100) return Colors.lightGreen;
-    if (aqi < 150) return Colors.yellow.shade700;
-    if (aqi < 200) return Colors.orange;
-    return Colors.red;
-  }
-
-  String _getAirQualityLabel(double aqi) {
-    if (aqi < 50) return isAr ? 'جيد' : 'Good';
-    if (aqi < 100) return isAr ? 'مقبول' : 'Moderate';
-    if (aqi < 150) return isAr ? 'غير صحي للحساسين' : 'Unhealthy for Sensitive';
-    if (aqi < 200) return isAr ? 'غير صحي' : 'Unhealthy';
-    return isAr ? 'خطير' : 'Hazardous';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final airQualityColor = _getAirQualityColor(zone.airQualityIndex);
-    final airQualityLabel = _getAirQualityLabel(zone.airQualityIndex);
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
-          BoxShadow(color: Color(0x0A000000), blurRadius: 10, offset: Offset(0, 3)),
-        ],
-      ),
-      child: Column(
-        children: [
-          // المؤشرات الرئيسية
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _EnvItem(
-                icon: Icons.thermostat_rounded,
-                label: isAr ? 'درجة الحرارة' : 'Temperature',
-                value: '${zone.temperatureC.toStringAsFixed(0)}°C',
-                color: const Color(0xFFE65100),
-              ),
-              _EnvItem(
-                icon: Icons.water_drop_rounded,
-                label: isAr ? 'الرطوبة' : 'Humidity',
-                value: '${zone.humidityPct.toStringAsFixed(0)}%',
-                color: const Color(0xFF0288D1),
-              ),
-              _EnvItem(
-                icon: Icons.air_rounded,
-                label: isAr ? 'جودة الهواء' : 'Air Quality',
-                value: zone.airQualityIndex.toStringAsFixed(0),
-                color: airQualityColor,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          // شريط جودة الهواء
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: airQualityColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: airQualityColor.withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.air_rounded, color: airQualityColor, size: 18),
-                const SizedBox(width: 8),
-                Text(
-                  isAr ? 'جودة الهواء: ' : 'Air Quality: ',
-                  style: GoogleFonts.cairo(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textDark,
-                  ),
-                ),
-                Expanded(
-                  child: LinearProgressIndicator(
-                    value: zone.airQualityIndex / 500,
-                    backgroundColor: Colors.grey.shade200,
-                    valueColor: AlwaysStoppedAnimation<Color>(airQualityColor),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  airQualityLabel,
-                  style: GoogleFonts.cairo(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: airQualityColor,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          // التنبؤ
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.analytics_rounded, color: AppColors.primary, size: 16),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    isAr ? zone.forecastNoteAr : zone.forecastNoteEn,
-                    style: GoogleFonts.cairo(
-                      fontSize: 11,
-                      color: AppColors.primary,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Icon(c.icon, color: Colors.white, size: isSelected ? 22 : 18),
+                        if (c.riskLevel == CaseRiskLevel.critical)
+                          Positioned(
+                            top: 0,
+                            right: 0,
+                            child: Container(
+                              width: 14,
+                              height: 14,
+                              decoration: const BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  '!',
+                                  style: GoogleFonts.cairo(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (c.affectedCount > 1)
+                          Positioned(
+                            bottom: -2,
+                            left: -2,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: const [
+                                  BoxShadow(color: Color(0x22000000), blurRadius: 3),
+                                ],
+                              ),
+                              child: Text(
+                                '${c.affectedCount}',
+                                style: GoogleFonts.cairo(
+                                  fontSize: 8,
+                                  fontWeight: FontWeight.bold,
+                                  color: c.color,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
-              ],
-            ),
+              );
+            }).toList(),
           ),
         ],
       ),
@@ -914,218 +752,147 @@ class _EnvironmentalCard extends StatelessWidget {
   }
 }
 
-class _EnvItem extends StatelessWidget {
-  final IconData icon;
-  final String label, value;
-  final Color color;
-
-  const _EnvItem({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Icon(icon, color: color, size: 22),
-        const SizedBox(height: 6),
-        Text(
-          value,
-          style: GoogleFonts.cairo(
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
-            color: color,
-          ),
-        ),
-        Text(
-          label,
-          style: GoogleFonts.cairo(fontSize: 10, color: AppColors.textGray),
-        ),
-      ],
-    );
-  }
-}
-
 // ════════════════════════════════════════════════════════
-//  _AIReportCard
+//  _CaseCard - بطاقة الحالة
 // ════════════════════════════════════════════════════════
-class _AIReportCard extends StatelessWidget {
-  final ZoneHealthReport? report;
+class _CaseCard extends StatelessWidget {
+  final ReportedCase caseData;
   final bool isAr;
-  final bool isExpanded;
-  final VoidCallback onToggle;
+  final VoidCallback onTap;
+  final VoidCallback onResolve;
 
-  const _AIReportCard({
-    required this.report,
+  const _CaseCard({
+    required this.caseData,
     required this.isAr,
-    required this.isExpanded,
-    required this.onToggle,
+    required this.onTap,
+    required this.onResolve,
   });
 
-  String _formatTime(DateTime time) {
+  String _timeAgo(DateTime time) {
     final diff = DateTime.now().difference(time);
-    if (diff.inHours < 1) return isAr ? 'منذ ${diff.inMinutes} دقيقة' : '${diff.inMinutes} min ago';
-    if (diff.inHours < 24) return isAr ? 'منذ ${diff.inHours} ساعة' : '${diff.inHours} hours ago';
-    return isAr ? 'منذ ${diff.inDays} يوم' : '${diff.inDays} days ago';
+    if (diff.inHours < 1) return isAr ? 'منذ ${diff.inMinutes} د' : '${diff.inMinutes}m';
+    if (diff.inHours < 24) return isAr ? 'منذ ${diff.inHours} س' : '${diff.inHours}h';
+    return isAr ? 'منذ ${diff.inDays} ي' : '${diff.inDays}d';
   }
 
   @override
   Widget build(BuildContext context) {
-    if (report == null) return const SizedBox.shrink();
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      padding: EdgeInsets.all(isExpanded ? 16 : 14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFEDE7F6), Color(0xFFF3E5F5)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFCE93D8), width: 0.5),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF6A1B9A),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 20),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isAr ? 'تحليل الذكاء الاصطناعي' : 'AI Analysis Report',
-                      style: GoogleFonts.cairo(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: const Color(0xFF4A148C),
-                      ),
-                    ),
-                    Text(
-                      'R₀ = ${report!.reproductionNumber.toStringAsFixed(1)} · ${isAr ? 'تم التحليل' : 'Analyzed'} ${_formatTime(report!.generatedAt)}',
-                      style: GoogleFonts.cairo(
-                        fontSize: 10,
-                        color: AppColors.textGray,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              GestureDetector(
-                onTap: onToggle,
-                child: Icon(
-                  isExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
-                  color: AppColors.textGray,
-                ),
-              ),
-            ],
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: caseData.color.withValues(alpha: 0.2),
+            width: 1,
           ),
-          if (isExpanded) ...[
-            const SizedBox(height: 14),
+          boxShadow: const [
+            BoxShadow(color: Color(0x0A000000), blurRadius: 6, offset: Offset(0, 2)),
+          ],
+        ),
+        child: Row(
+          children: [
             Container(
-              padding: const EdgeInsets.all(12),
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.7),
+                color: caseData.color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Text(
-                isAr ? report!.aiAnalysisAr : report!.aiAnalysisEn,
-                style: GoogleFonts.cairo(
-                  fontSize: 13,
-                  color: AppColors.textDark,
-                  height: 1.5,
-                ),
-              ),
+              child: Icon(caseData.icon, color: caseData.color, size: 22),
             ),
-            const SizedBox(height: 12),
-            Text(
-              isAr ? 'التوصيات' : 'Recommendations',
-              style: GoogleFonts.cairo(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: const Color(0xFF4A148C),
-              ),
-            ),
-            const SizedBox(height: 8),
-            ...(isAr ? report!.recommendationsAr : report!.recommendationsEn).map((rec) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.check_circle_rounded, size: 14, color: AppColors.success),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      rec,
-                      style: GoogleFonts.cairo(fontSize: 12, color: AppColors.textDark),
+                  Text(
+                    isAr ? caseData.titleAr : caseData.titleEn,
+                    style: GoogleFonts.cairo(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.textDark,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    isAr ? caseData.locationNameAr : caseData.locationNameEn,
+                    style: GoogleFonts.cairo(
+                      fontSize: 10,
+                      color: AppColors.textGray,
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: caseData.getRiskColor().withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          caseData.getRiskLabel(isAr),
+                          style: GoogleFonts.cairo(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: caseData.getRiskColor(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _timeAgo(caseData.reportedAt),
+                        style: GoogleFonts.cairo(fontSize: 10, color: AppColors.textGray),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            )),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-// ════════════════════════════════════════════════════════
-//  _AlertsList
-// ════════════════════════════════════════════════════════
-class _AlertsList extends StatelessWidget {
-  final List<String> alerts;
-  final bool isAr;
-
-  const _AlertsList({
-    required this.alerts,
-    required this.isAr,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (alerts.isEmpty) return const SizedBox.shrink();
-    
-    return Column(
-      children: alerts.map((alert) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFF3E0),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFFFCC80)),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.warning_amber_rounded, color: Color(0xFFE65100), size: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  alert,
-                  style: GoogleFonts.cairo(
-                    fontSize: 12,
-                    color: const Color(0xFFE65100),
+            ),
+            Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: caseData.color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${caseData.affectedCount}',
+                    style: GoogleFonts.cairo(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      color: caseData.color,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+                const SizedBox(height: 4),
+                GestureDetector(
+                  onTap: onResolve,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      isAr ? 'حل' : 'Resolve',
+                      style: GoogleFonts.cairo(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.green,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
-      )).toList(),
+      ),
     );
   }
 }

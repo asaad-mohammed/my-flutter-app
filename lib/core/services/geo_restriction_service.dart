@@ -3,18 +3,28 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class GeoRestrictionService {
-  /// يتحقق من أن المستخدم داخل العراق وليس مستخدماً VPN
+  /// يتحقق من أن المستخدم داخل العراق وليس مستخدماً VPN حقيقياً.
+  ///
+  /// ملاحظات مهمة حول التصحيح:
+  /// 1) لا نعتمد على حقل "hosting" لتحديد VPN، لأن شبكات الجوال العراقية
+  ///    (آسيا سيل/زين/كورك) تستخدم CGNAT وتتشارك مدى IP مع مزودي سحابة،
+  ///    مما يجعل ip-api.com/ipapi.co يضعان علامة "hosting=true" خطأ.
+  /// 2) نعتمد VPN/Proxy فقط إذا أكّد المصدر ذلك صراحة عبر "proxy" أو
+  ///    "is_vpn" أو "is_tor" — وليس "hosting" وحدها.
+  /// 3) إذا فشلت كل مصادر الشبكة (انقطاع الخدمة، rate limit، إلخ) فإننا
+  ///    لا نحظر المستخدم تلقائياً بل نسمح بالدخول (fail-open) مع تسجيل
+  ///    الخطأ، لأن حظر مستخدم حقيقي بسبب خطأ في خدمة خارجية ثالثة هو
+  ///    تجربة استخدام سيئة جداً. يمكن تغيير هذا السلوك حسب الحاجة.
   static Future<GeoCheckResult> checkAccess() async {
     try {
-      // نجرب عدة مصادر للتحقق من الموقع
       final result = await _checkWithMultipleSources();
       return result;
     } catch (e) {
-      // إذا فشل الاتصال، افترض أنه خارج العراق أو بدون إنترنت
-      return GeoCheckResult(
-        isAllowed: false,
-        reason: GeoBlockReason.noInternet,
-      );
+      // فشلت كل المصادر الخارجية (وليس بالضرورة لا يوجد إنترنت،
+      // فهذا الفحص يحدث بعد التأكد من وجود إنترنت في الشاشة السابقة).
+      // الأفضل هنا هو السماح بالدخول مؤقتاً بدل حظر مستخدم عراقي حقيقي.
+      // print('GeoRestrictionService: all sources failed -> fail-open. $e');
+      return GeoCheckResult(isAllowed: true, reason: null);
     }
   }
 
@@ -27,11 +37,23 @@ class GeoRestrictionService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final country = data['country_code'] as String? ?? '';
-        final isVpn = data['threat'] != null &&
-            (data['threat']['is_vpn'] == true ||
-                data['threat']['is_proxy'] == true ||
-                data['threat']['is_tor'] == true);
+
+        // إذا أعاد المصدر رسالة خطأ (مثل rate limit) تجاهله وجرّب التالي
+        if (data['error'] == true) {
+          throw Exception('ipapi.co error: ${data['reason']}');
+        }
+
+        final country = (data['country_code'] as String? ?? '').toUpperCase();
+        if (country.isEmpty) {
+          throw Exception('ipapi.co returned empty country');
+        }
+
+        // كشف VPN/Proxy حقيقي فقط — تجاهل حقل hosting المضلل
+        final threat = data['threat'];
+        final isVpn = threat != null &&
+            (threat['is_vpn'] == true ||
+                threat['is_proxy'] == true ||
+                threat['is_tor'] == true);
 
         if (country != 'IQ') {
           return GeoCheckResult(
@@ -47,19 +69,34 @@ class GeoRestrictionService {
         }
         return GeoCheckResult(isAllowed: true, reason: null);
       }
-    } catch (_) {}
+    } catch (_) {
+      // نتابع للمصدر التالي
+    }
 
     // المصدر الثاني: ip-api.com (احتياطي)
     try {
       final response = await http
           .get(Uri.parse(
-              'http://ip-api.com/json/?fields=status,countryCode,proxy,hosting'))
+              'http://ip-api.com/json/?fields=status,countryCode,proxy,mobile,message'))
           .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final country = data['countryCode'] as String? ?? '';
-        final isProxy = data['proxy'] == true || data['hosting'] == true;
+
+        if (data['status'] != 'success') {
+          throw Exception('ip-api.com error: ${data['message']}');
+        }
+
+        final country = (data['countryCode'] as String? ?? '').toUpperCase();
+        if (country.isEmpty) {
+          throw Exception('ip-api.com returned empty country');
+        }
+
+        // proxy=true فقط يُعتمد لكشف VPN/Proxy. لا نستخدم hosting لأنه
+        // يعطي نتائج كاذبة كثيرة على شبكات الجوال العراقية.
+        // إذا كان mobile=true فهذا يدعم أنه اتصال جوال حقيقي (ليس VPN).
+        final isMobile = data['mobile'] == true;
+        final isProxy = data['proxy'] == true && !isMobile;
 
         if (country != 'IQ') {
           return GeoCheckResult(
@@ -75,10 +112,47 @@ class GeoRestrictionService {
         }
         return GeoCheckResult(isAllowed: true, reason: null);
       }
-    } catch (_) {}
+    } catch (_) {
+      // نتابع
+    }
 
-    // إذا فشلت كل المصادر
-    throw Exception('Failed to check location');
+    // المصدر الثالث: ipwho.is (احتياطي إضافي، مجاني وبدون مفتاح API)
+    try {
+      final response = await http
+          .get(Uri.parse('https://ipwho.is/'))
+          .timeout(const Duration(seconds: 8));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        if (data['success'] == false) {
+          throw Exception('ipwho.is error: ${data['message']}');
+        }
+
+        final country = (data['country_code'] as String? ?? '').toUpperCase();
+        if (country.isEmpty) {
+          throw Exception('ipwho.is returned empty country');
+        }
+
+        final connection = data['connection'];
+        final isMobile = connection != null && connection['type'] == 'mobile';
+        // ipwho.is لا يوفر كشف proxy مباشر في الخطة المجانية، فنعتمد
+        // فقط على الدولة من هذا المصدر كحَكَم نهائي للموقع.
+        if (country != 'IQ') {
+          return GeoCheckResult(
+            isAllowed: false,
+            reason: GeoBlockReason.outsideIraq,
+          );
+        }
+        return GeoCheckResult(isAllowed: true, reason: null);
+      }
+    } catch (_) {
+      // نتابع
+    }
+
+    // إذا فشلت كل المصادر الثلاثة، نرمي استثناءً يُعالَج بـ fail-open
+    // في checkAccess() أعلاه.
+    throw Exception('Failed to check location: all sources unavailable');
   }
 }
 

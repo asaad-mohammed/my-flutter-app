@@ -1,11 +1,13 @@
 // ════════════════════════════════════════════════════════
 //  tabs/emergency_tab.dart
-//  ✅ شبكة خدمات موسّعة (8 خدمات)
-//  ✅ عند الضغط على المساعد تختفي الخدمات ويظهر المساعد في نفس المكان
-//  ✅ رفع المساعد إلى الأعلى
+//  ✅ دمج خدمات الطوارئ مع الخدمات العامة في شبكة واحدة
+//  ✅ حذف بطاقة SOS القصوى (_BigSOSButton)
+//  ✅ الإبقاء على زر 911 الدائري فقط
+//  ✅ حذف قسم تبليغ عن حالة طارئة
+//  ✅ حذف قسم الوصول السريع
 //  ✅ إصلاح مشكلة unbounded height
-//  ✅ إخفاء زر SOS وزر المساعد عند فتح لوحة المساعد
 //  ✅ إصلاح مشكلة الكتابة تحت أزرار الهاتف
+//  ✅ دعم صوتي (TTS): ترحيب صوتي + نطق ردود المساعد الذكي
 // ════════════════════════════════════════════════════════
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,7 +16,8 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/providers/app_providers.dart';
-import '../widgets/emergency_widgets.dart';
+import '../../core/services/voice_service.dart';
+import '../emergency_widgets.dart';
 
 class EmergencyTab extends ConsumerStatefulWidget {
   const EmergencyTab({super.key});
@@ -26,15 +29,11 @@ class EmergencyTab extends ConsumerStatefulWidget {
 class _EmergencyTabState extends ConsumerState<EmergencyTab>
     with TickerProviderStateMixin {
 
-  // ── حالة SOS ─────────────────────────────────────────
-  bool _sosActive = false;
-
   // ── حالة المحادثة الذكية ──────────────────────────────
   bool _chatVisible = false;
 
-  // ── أنيميشن SOS ──────────────────────────────────────
-  late AnimationController _sosCtrl;
-  late Animation<double>   _sosPulse;
+  // ── حالة الصوت (تشغيل/إيقاف نطق ردود المساعد) ────────
+  bool _voiceOn = true;
 
   // ── أنيميشن ظهور/اختفاء المحادثة والخدمات ────────────
   late AnimationController _transitionCtrl;
@@ -42,7 +41,7 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
   late Animation<double>   _servicesScale;
   late Animation<double>   _chatFade;
   late Animation<double>   _chatSlide;
-  late Animation<double>   _topBarFade;  // ✅ لإخفاء الأزرار العلوية
+  late Animation<double>   _topBarFade;
 
   // ── المحادثة ─────────────────────────────────────────
   final _inputCtrl  = TextEditingController();
@@ -68,34 +67,39 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
   void initState() {
     super.initState();
 
-    _sosCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 800))
-      ..repeat(reverse: true);
-    _sosPulse = Tween<double>(begin: 1.0, end: 1.06)
-        .animate(CurvedAnimation(parent: _sosCtrl, curve: Curves.easeInOut));
-
-    // أنيميشن الانتقال بين الخدمات والمحادثة
     _transitionCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 350));
-    
+
     _servicesFade = CurvedAnimation(
         parent: _transitionCtrl, curve: Curves.easeOut);
     _servicesScale = Tween<double>(begin: 1.0, end: 0.8)
         .animate(CurvedAnimation(parent: _transitionCtrl, curve: Curves.easeOut));
-    
+
     _chatFade = CurvedAnimation(
         parent: _transitionCtrl, curve: Curves.easeOut);
     _chatSlide = Tween<double>(begin: 50, end: 0)
         .animate(CurvedAnimation(parent: _transitionCtrl, curve: Curves.easeOutCubic));
-    
-    // ✅ لإخفاء العناصر العلوية (SOS + زر المساعد)
+
     _topBarFade = Tween<double>(begin: 1.0, end: 0.0)
         .animate(CurvedAnimation(parent: _transitionCtrl, curve: Curves.easeOut));
+
+    // ── ترحيب صوتي عند فتح التبويب ──────────────────────
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final isAr = ref.read(languageProvider);
+      VoiceService.instance.setEnabled(_voiceOn);
+      VoiceService.instance.speak(
+        isAr
+            ? 'أهلاً وسهلاً بتطبيق الإنقاذ. كيف يمكنني مساعدتك؟'
+            : 'Welcome to the Rescue app. How can I help you?',
+        isAr: isAr,
+      );
+    });
   }
 
   @override
   void dispose() {
-    _sosCtrl.dispose();
+    VoiceService.instance.stop();
     _transitionCtrl.dispose();
     _inputCtrl.dispose();
     _scrollCtrl.dispose();
@@ -109,16 +113,26 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
       setState(() => _chatVisible = true);
       _transitionCtrl.forward();
     } else {
+      VoiceService.instance.stop();
       _transitionCtrl.reverse().then((_) {
         if (mounted) setState(() => _chatVisible = false);
       });
     }
   }
 
+  // ── تبديل تشغيل/إيقاف الصوت ──────────────────────────
+  void _toggleVoice() {
+    HapticFeedback.selectionClick();
+    setState(() => _voiceOn = !_voiceOn);
+    VoiceService.instance.setEnabled(_voiceOn);
+    if (!_voiceOn) VoiceService.instance.stop();
+  }
+
   // ── إرسال رسالة ──────────────────────────────────────
   void _send(String text) {
     if (text.trim().isEmpty) return;
     HapticFeedback.lightImpact();
+    final isAr = ref.read(languageProvider);
     setState(() {
       _messages.add(ChatMessage(text.trim(), true));
       _typing = true;
@@ -128,11 +142,15 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
 
     Future.delayed(const Duration(milliseconds: 1350), () {
       if (!mounted) return;
+      final reply = _aiReplies[_replyIndex++ % _aiReplies.length];
       setState(() {
         _typing = false;
-        _messages.add(ChatMessage(_aiReplies[_replyIndex++ % _aiReplies.length], false));
+        _messages.add(ChatMessage(reply, false));
       });
       _scrollToBottom();
+
+      // ── نطق رد المساعد الذكي صوتياً ───────────────────
+      VoiceService.instance.speak(reply, isAr: isAr);
     });
   }
 
@@ -147,45 +165,61 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
         }
       });
 
-  // ── خدمات الطوارئ الكاملة ────────────────────────────
+  // ── قائمة الخدمات المدمجة (طوارئ + عامة) ─────────────
   List<_EService> _services(bool isAr) => [
-    _EService(emoji: '🚑', labelAr: 'إسعاف',   labelEn: 'Ambulance',
+    // ── الخدمات العامة ──
+    _EService(
+      emoji: '🚔', labelAr: 'مراكز الشرطة', labelEn: 'Police Stations',
+      subAr: 'القريبة', subEn: 'Nearby',
+      colors: const [Color(0xFF0D47A1), Color(0xFF1976D2)],
+      shadow: const Color(0x501976D2),
+      msgAr: 'أحتاج الشرطة في موقعي', msgEn: 'I need police at my location'),
+    _EService(
+      emoji: '🚒', labelAr: 'مراكز الإطفاء', labelEn: 'Fire Stations',
+      subAr: 'القريبة', subEn: 'Nearby',
+      colors: const [Color(0xFF880E4F), Color(0xFFC2185B)],
+      shadow: const Color(0x50C2185B),
+      msgAr: 'يوجد حريق! أحتاج سيارة إطفاء', msgEn: 'Fire! Need a fire truck'),
+    _EService(
+      emoji: '🏥', labelAr: 'المستشفيات', labelEn: 'Hospitals',
+      subAr: 'القريبة', subEn: 'Nearby',
+      colors: const [Color(0xFF1565C0), Color(0xFF0288D1)],
+      shadow: const Color(0x500288D1),
+      msgAr: 'أحتاج سيارة إسعاف فوراً!', msgEn: 'I need an ambulance now!'),
+    // ── خدمات الطوارئ ──
+    _EService(
+      emoji: '🚑', labelAr: 'إسعاف', labelEn: 'Ambulance',
       subAr: 'طبي عاجل', subEn: 'Medical',
       colors: const [Color(0xFFE65100), Color(0xFFFF6D00)],
       shadow: const Color(0x50FF6D00),
       msgAr: 'أحتاج سيارة إسعاف فوراً!', msgEn: 'I need an ambulance!'),
-    _EService(emoji: '🚔', labelAr: 'شرطة',    labelEn: 'Police',
-      subAr: 'أمن',       subEn: 'Security',
-      colors: const [Color(0xFF0D47A1), Color(0xFF1976D2)],
-      shadow: const Color(0x501976D2),
-      msgAr: 'أحتاج الشرطة في موقعي', msgEn: 'I need police at my location'),
-    _EService(emoji: '🚒', labelAr: 'إطفاء',   labelEn: 'Fire Dept',
-      subAr: 'حريق',      subEn: 'Fire',
-      colors: const [Color(0xFF880E4F), Color(0xFFC2185B)],
-      shadow: const Color(0x50C2185B),
-      msgAr: 'يوجد حريق! أحتاج سيارة إطفاء', msgEn: 'Fire! Need a fire truck'),
-    _EService(emoji: '⚡', labelAr: 'كهرباء',  labelEn: 'Electric',
+    _EService(
+      emoji: '⚡', labelAr: 'كهرباء', labelEn: 'Electric',
       subAr: 'خطر كهربائي', subEn: 'Electric Hazard',
       colors: const [Color(0xFFF57F17), Color(0xFFFBC02D)],
       shadow: const Color(0x50FBC02D),
       msgAr: 'يوجد خطر كهربائي! خط ساقط أو تماس', msgEn: 'Electrical hazard! Fallen line'),
-    _EService(emoji: '🌊', labelAr: 'غرق',     labelEn: 'Drowning',
+    _EService(
+      emoji: '🌊', labelAr: 'غرق', labelEn: 'Drowning',
       subAr: 'إنقاذ مائي', subEn: 'Water Rescue',
       colors: const [Color(0xFF006064), Color(0xFF00838F)],
       shadow: const Color(0x5000838F),
       msgAr: 'شخص يغرق! أحتاج فريق إنقاذ', msgEn: 'Someone drowning! Need rescue'),
-    _EService(emoji: '🏗️', labelAr: 'انهيار', labelEn: 'Collapse',
-      subAr: 'أنقاض',     subEn: 'Rubble',
+    _EService(
+      emoji: '🏗️', labelAr: 'انهيار', labelEn: 'Collapse',
+      subAr: 'أنقاض', subEn: 'Rubble',
       colors: const [Color(0xFF4A148C), Color(0xFF7B1FA2)],
       shadow: const Color(0x507B1FA2),
       msgAr: 'انهار مبنى! أشخاص محاصرون تحت الأنقاض', msgEn: 'Building collapsed! People trapped'),
-    _EService(emoji: '☢️', labelAr: 'تسرب',   labelEn: 'Gas Leak',
-      subAr: 'غاز خطر',   subEn: 'Hazardous',
+    _EService(
+      emoji: '☢️', labelAr: 'تسرب', labelEn: 'Gas Leak',
+      subAr: 'غاز خطر', subEn: 'Hazardous',
       colors: const [Color(0xFF1B5E20), Color(0xFF2E7D32)],
       shadow: const Color(0x502E7D32),
       msgAr: 'يوجد تسرب غاز خطير في المنطقة', msgEn: 'Dangerous gas leak in area'),
-    _EService(emoji: '🆘', labelAr: 'نجدة',    labelEn: 'Rescue',
-      subAr: 'مفقود',     subEn: 'Missing',
+    _EService(
+      emoji: '🆘', labelAr: 'نجدة', labelEn: 'Rescue',
+      subAr: 'مفقود', subEn: 'Missing',
       colors: const [Color(0xFF37474F), Color(0xFF546E7A)],
       shadow: const Color(0x50546E7A),
       msgAr: 'شخص مفقود! أحتاج فريق بحث وإنقاذ', msgEn: 'Person missing! Need search team'),
@@ -213,7 +247,6 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
       textDirection: isAr ? TextDirection.rtl : TextDirection.ltr,
       child: Scaffold(
         backgroundColor: AppColors.bg,
-        // ✅ إصلاح مشكلة الكتابة تحت أزرار الهاتف
         resizeToAvoidBottomInset: true,
         body: SafeArea(
           child: Column(
@@ -228,40 +261,21 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
                   keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                   slivers: [
                     SliverPadding(
-                      padding: EdgeInsets.fromLTRB(14, 10, 14, MediaQuery.of(context).viewInsets.bottom + 20),
+                      padding: EdgeInsets.fromLTRB(
+                          14, 10, 14,
+                          MediaQuery.of(context).viewInsets.bottom + 20),
                       sliver: SliverList(
                         delegate: SliverChildListDelegate([
 
                           // ── تنبيه ──────────────────────
-                          _TipRow(isAr: isAr),
+                          EmergencyTipBox(isAr: isAr),
                           const SizedBox(height: 14),
 
-                          // ── زر SOS الكبير (يختفي عند فتح المساعد) ──
-                          AnimatedBuilder(
-                            animation: _transitionCtrl,
-                            builder: (_, __) {
-                              return Opacity(
-                                opacity: _chatVisible ? _topBarFade.value : 1.0,
-                                child: _chatVisible 
-                                    ? const SizedBox.shrink()
-                                    : _BigSOSButton(
-                                        isAr: isAr,
-                                        isActive: _sosActive,
-                                        pulse: _sosPulse,
-                                        onTap: () {
-                                          HapticFeedback.heavyImpact();
-                                          setState(() => _sosActive = true);
-                                          Future.delayed(const Duration(seconds: 4), () {
-                                            if (mounted) setState(() => _sosActive = false);
-                                          });
-                                        },
-                                      ),
-                              );
-                            },
-                          ),
+                          // ── زر 911 الدائري ─────────────
+                          _Sos911Button(isAr: isAr),
                           const SizedBox(height: 18),
 
-                          // ── عنوان الخدمات + زر المساعد (يختفيان معاً) ──
+                          // ── عنوان الخدمات + زر المساعد ──
                           AnimatedBuilder(
                             animation: _transitionCtrl,
                             builder: (_, __) {
@@ -276,7 +290,7 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
                                     _SLabel(
                                       icon: Icons.grid_view_rounded,
                                       color: AppColors.primary,
-                                      label: isAr ? 'خدمات الطوارئ' : 'Emergency Services',
+                                      label: isAr ? 'الخدمات العامة' : 'General Services',
                                     ),
                                     _AiToggleBtn(
                                       isAr: isAr,
@@ -290,7 +304,7 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
                           ),
                           const SizedBox(height: 10),
 
-                          // ── شبكة الخدمات (تختفي عند ظهور المساعد) ──
+                          // ── شبكة الخدمات المدمجة ───────
                           AnimatedBuilder(
                             animation: _transitionCtrl,
                             builder: (_, __) {
@@ -298,13 +312,10 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
                                 return const SizedBox.shrink();
                               }
                               return FadeTransition(
-                                opacity: Tween<double>(
-                                  begin: 1.0,
-                                  end: 0.0,
-                                ).animate(CurvedAnimation(
-                                  parent: _transitionCtrl,
-                                  curve: Curves.easeOut,
-                                )),
+                                opacity: Tween<double>(begin: 1.0, end: 0.0).animate(
+                                    CurvedAnimation(
+                                        parent: _transitionCtrl,
+                                        curve: Curves.easeOut)),
                                 child: ScaleTransition(
                                   scale: _servicesScale,
                                   child: Column(
@@ -315,16 +326,23 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
                                         onTap: (s) {
                                           final msg = isAr ? s.msgAr : s.msgEn;
                                           HapticFeedback.mediumImpact();
-                                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                            content: Text(msg, style: GoogleFonts.cairo(color: Colors.white)),
-                                            backgroundColor: AppColors.primary,
-                                            behavior: SnackBarBehavior.floating,
-                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                            duration: const Duration(seconds: 2),
-                                          ));
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(
+                                              content: Text(msg,
+                                                  style: GoogleFonts.cairo(
+                                                      color: Colors.white)),
+                                              backgroundColor: AppColors.primary,
+                                              behavior: SnackBarBehavior.floating,
+                                              shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(12)),
+                                              duration: const Duration(seconds: 2),
+                                            ),
+                                          );
                                         },
                                       ),
-                                      const SizedBox(height: 14),
+                                      const SizedBox(height: 10),
+                                      _TipRow(isAr: isAr),
                                     ],
                                   ),
                                 ),
@@ -334,9 +352,7 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
 
                           const SizedBox(height: 8),
 
-                          // ══════════════════════════════
-                          //  ✅ لوحة المساعد الذكي
-                          // ══════════════════════════════
+                          // ── لوحة المساعد الذكي ─────────
                           AnimatedBuilder(
                             animation: _transitionCtrl,
                             builder: (_, __) {
@@ -357,8 +373,10 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
                                       inputCtrl: _inputCtrl,
                                       quickReplies: _quickReplies(isAr),
                                       services: srvs,
+                                      voiceOn: _voiceOn,
                                       onSend: _send,
                                       onClose: _toggleChat,
+                                      onToggleVoice: _toggleVoice,
                                     ),
                                   ),
                                 ),
@@ -367,7 +385,6 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
                           ),
 
                           const SizedBox(height: 20),
-
                         ]),
                       ),
                     ),
@@ -383,10 +400,126 @@ class _EmergencyTabState extends ConsumerState<EmergencyTab>
 }
 
 // ════════════════════════════════════════════════════════
-//  ✅ باقي الـ Widgets (نفس الكود السابق)
+//  _Sos911Button — زر 911 الدائري فقط (بدون SOS Card)
 // ════════════════════════════════════════════════════════
+class _Sos911Button extends StatefulWidget {
+  final bool isAr;
+  const _Sos911Button({required this.isAr});
 
-// ── زر تبديل المساعد الذكي ─────────────────────────────────
+  @override
+  State<_Sos911Button> createState() => _Sos911ButtonState();
+}
+
+class _Sos911ButtonState extends State<_Sos911Button>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseCtrl;
+  late Animation<double>   _pulse;
+  bool _pressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 800))
+      ..repeat(reverse: true);
+    _pulse = Tween<double>(begin: 1.0, end: 1.06)
+        .animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _pulseCtrl.dispose();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    HapticFeedback.heavyImpact();
+    setState(() => _pressed = true);
+    Future.delayed(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _pressed = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hint = widget.isAr
+        ? 'اتصل بالرقم 911 او بلغ عن حالة طوارئ'
+        : 'Call 911 or report an emergency';
+
+    return Column(children: [
+      Text(hint,
+          style: GoogleFonts.cairo(fontSize: 12, color: const Color(0xFF888888))),
+      const SizedBox(height: 10),
+      ScaleTransition(
+        scale: _pressed ? const AlwaysStoppedAnimation(1.0) : _pulse,
+        child: GestureDetector(
+          onTap: _handleTap,
+          child: Container(
+            width: 160, height: 160,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFFE53935).withOpacity(0.12),
+            ),
+            child: Center(
+              child: Container(
+                width: 130, height: 130,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFFE53935).withOpacity(0.20),
+                ),
+                child: Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    width: 105, height: 105,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _pressed
+                          ? const Color(0xFF2E7D32)
+                          : const Color(0xFFE53935),
+                      boxShadow: [
+                        BoxShadow(
+                          color: (_pressed
+                                  ? const Color(0xFF2E7D32)
+                                  : const Color(0xFFE53935))
+                              .withOpacity(0.45),
+                          blurRadius: 20,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: _pressed
+                          ? Text('✓',
+                              style: GoogleFonts.cairo(
+                                  fontSize: 36,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white))
+                          : Text(
+                              widget.isAr
+                                  ? '(( 911 ))'
+                                  : '(( 911 ))',
+                              style: GoogleFonts.cairo(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                  letterSpacing: 0.5),
+                            ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ]);
+  }
+}
+
+
+// ════════════════════════════════════════════════════════
+//  _AiToggleBtn — زر تبديل المساعد الذكي
+// ════════════════════════════════════════════════════════
 class _AiToggleBtn extends StatelessWidget {
   final bool isAr, isOpen;
   final VoidCallback onTap;
@@ -406,55 +539,52 @@ class _AiToggleBtn extends StatelessWidget {
           color: isOpen ? null : Colors.white,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isOpen ? Colors.transparent : AppColors.primary.withValues(alpha: 0.3),
-          ),
+              color: isOpen
+                  ? Colors.transparent
+                  : AppColors.primary.withOpacity(0.3)),
           boxShadow: [
             BoxShadow(
               color: isOpen
-                  ? AppColors.primary.withValues(alpha: 0.3)
+                  ? AppColors.primary.withOpacity(0.3)
                   : const Color(0x0A000000),
               blurRadius: 8, offset: const Offset(0, 3),
             ),
           ],
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              isOpen ? Icons.smart_toy_rounded : Icons.smart_toy_outlined,
-              color: isOpen ? Colors.white : AppColors.primary,
-              size: 15,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              isAr
-                  ? (isOpen ? 'إخفاء المساعد' : 'المساعد الذكي')
-                  : (isOpen ? 'Hide Assistant' : 'AI Assistant'),
-              style: GoogleFonts.cairo(
-                fontSize: 11.5, fontWeight: FontWeight.w700,
-                color: isOpen ? Colors.white : AppColors.primary,
-              ),
-            ),
-            const SizedBox(width: 4),
-            AnimatedRotation(
-              duration: const Duration(milliseconds: 250),
-              turns: isOpen ? 0.5 : 0,
-              child: Icon(Icons.keyboard_arrow_down_rounded,
-                  color: isOpen ? Colors.white : AppColors.primary, size: 16),
-            ),
-          ],
-        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(
+            isOpen ? Icons.smart_toy_rounded : Icons.smart_toy_outlined,
+            color: isOpen ? Colors.white : AppColors.primary,
+            size: 15,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            isAr
+                ? (isOpen ? 'إخفاء المساعد' : 'المساعد الذكي')
+                : (isOpen ? 'Hide Assistant' : 'AI Assistant'),
+            style: GoogleFonts.cairo(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: isOpen ? Colors.white : AppColors.primary),
+          ),
+          const SizedBox(width: 4),
+          AnimatedRotation(
+            duration: const Duration(milliseconds: 250),
+            turns: isOpen ? 0.5 : 0,
+            child: Icon(Icons.keyboard_arrow_down_rounded,
+                color: isOpen ? Colors.white : AppColors.primary, size: 16),
+          ),
+        ]),
       ),
     );
   }
 }
 
 // ════════════════════════════════════════════════════════
-//  باقي الـ Widgets (نفس الكود السابق - لم يتغير)
+//  _AiChatPanel — لوحة المساعد الذكي
 // ════════════════════════════════════════════════════════
-
 class _AiChatPanel extends StatelessWidget {
-  final bool isAr, typing;
+  final bool isAr, typing, voiceOn;
   final List<ChatMessage> messages;
   final ScrollController scrollCtrl;
   final TextEditingController inputCtrl;
@@ -462,17 +592,15 @@ class _AiChatPanel extends StatelessWidget {
   final List<_EService> services;
   final ValueChanged<String> onSend;
   final VoidCallback onClose;
+  final VoidCallback onToggleVoice;
 
   const _AiChatPanel({
-    required this.isAr,
-    required this.typing,
-    required this.messages,
-    required this.scrollCtrl,
-    required this.inputCtrl,
-    required this.quickReplies,
-    required this.services,
-    required this.onSend,
-    required this.onClose,
+    required this.isAr, required this.typing,
+    required this.messages, required this.scrollCtrl,
+    required this.inputCtrl, required this.quickReplies,
+    required this.services, required this.voiceOn,
+    required this.onSend, required this.onClose,
+    required this.onToggleVoice,
   });
 
   @override
@@ -485,42 +613,48 @@ class _AiChatPanel extends StatelessWidget {
           BoxShadow(color: Color(0x12000000), blurRadius: 18, offset: Offset(0, 4)),
         ],
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _ChatHeader(isAr: isAr, onClose: onClose),
-          _MiniServicesRow(services: services, isAr: isAr, onTap: onSend),
-          _QuickRepliesRow(quickReplies: quickReplies, onTap: onSend),
-          Expanded(
-            child: ListView.builder(
-              controller: scrollCtrl,
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
-              itemCount: messages.length + (typing ? 1 : 0),
-              itemBuilder: (_, i) {
-                if (i == messages.length && typing) return const TypingBubble();
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 5),
-                  child: ChatBubble(msg: messages[i]),
-                );
-              },
-            ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        _ChatHeader(
+          isAr: isAr,
+          voiceOn: voiceOn,
+          onClose: onClose,
+          onToggleVoice: onToggleVoice,
+        ),
+        _MiniServicesRow(services: services, isAr: isAr, onTap: onSend),
+        _QuickRepliesRow(quickReplies: quickReplies, onTap: onSend),
+        Expanded(
+          child: ListView.builder(
+            controller: scrollCtrl,
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+            itemCount: messages.length + (typing ? 1 : 0),
+            itemBuilder: (_, i) {
+              if (i == messages.length && typing) return const TypingBubble();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: ChatBubble(msg: messages[i]),
+              );
+            },
           ),
-          _ChatInputBar(
-            isAr: isAr,
-            controller: inputCtrl,
-            onSend: onSend,
-          ),
-        ],
-      ),
+        ),
+        _ChatInputBar(isAr: isAr, controller: inputCtrl, onSend: onSend),
+      ]),
     );
   }
 }
 
-// ── باقي الـ Widgets كما هي (لم تتغير) ─────────────────────
+// ════════════════════════════════════════════════════════
+//  _ChatHeader — هيدر لوحة المساعد
+// ════════════════════════════════════════════════════════
 class _ChatHeader extends StatelessWidget {
-  final bool isAr;
+  final bool isAr, voiceOn;
   final VoidCallback onClose;
-  const _ChatHeader({required this.isAr, required this.onClose});
+  final VoidCallback onToggleVoice;
+  const _ChatHeader({
+    required this.isAr,
+    required this.voiceOn,
+    required this.onClose,
+    required this.onToggleVoice,
+  });
 
   @override
   Widget build(BuildContext context) => Container(
@@ -536,39 +670,61 @@ class _ChatHeader extends StatelessWidget {
       Container(
         width: 34, height: 34,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.18), shape: BoxShape.circle),
+            color: Colors.white.withOpacity(0.18), shape: BoxShape.circle),
         child: const Icon(Icons.smart_toy_rounded, color: Colors.white, size: 18),
       ),
       const SizedBox(width: 10),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(isAr ? 'مساعد إغاثة الذكي' : 'AI Emergency Assistant',
-          style: GoogleFonts.cairo(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white)),
-        Text(isAr ? 'متاح 24/7 · يحدد موقعك تلقائياً' : 'Available 24/7 · Auto-locates you',
+        Text(
+          isAr ? 'مساعد إغاثة الذكي' : 'AI Emergency Assistant',
+          style: GoogleFonts.cairo(
+              fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white)),
+        Text(
+          isAr ? 'متاح 24/7 · يحدد موقعك تلقائياً' : 'Available 24/7 · Auto-locates you',
           style: GoogleFonts.cairo(fontSize: 9.5, color: Colors.white60)),
       ])),
       Container(width: 8, height: 8,
-        decoration: const BoxDecoration(color: Color(0xFF69F0AE), shape: BoxShape.circle)),
-      const SizedBox(width: 10),
+          decoration: const BoxDecoration(
+              color: Color(0xFF69F0AE), shape: BoxShape.circle)),
+      const SizedBox(width: 8),
+      // ── زر تشغيل/إيقاف الصوت ─────────────────────────
+      GestureDetector(
+        onTap: onToggleVoice,
+        child: Container(
+          width: 28, height: 28,
+          decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.18), shape: BoxShape.circle),
+          child: Icon(
+            voiceOn ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+            color: Colors.white,
+            size: 16,
+          ),
+        ),
+      ),
+      const SizedBox(width: 8),
       GestureDetector(
         onTap: onClose,
         child: Container(
           width: 28, height: 28,
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.18),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white, size: 18),
+              color: Colors.white.withOpacity(0.18), shape: BoxShape.circle),
+          child: const Icon(Icons.keyboard_arrow_down_rounded,
+              color: Colors.white, size: 18),
         ),
       ),
     ]),
   );
 }
 
+// ════════════════════════════════════════════════════════
+//  _MiniServicesRow — شريط الخدمات الصغير داخل المحادثة
+// ════════════════════════════════════════════════════════
 class _MiniServicesRow extends StatelessWidget {
   final List<_EService> services;
   final bool isAr;
   final ValueChanged<String> onTap;
-  const _MiniServicesRow({required this.services, required this.isAr, required this.onTap});
+  const _MiniServicesRow(
+      {required this.services, required this.isAr, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -585,10 +741,13 @@ class _MiniServicesRow extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 7),
         itemBuilder: (_, i) {
           final s = services[i];
-          return _MiniServiceChip(service: s, isAr: isAr, onTap: () {
-            HapticFeedback.lightImpact();
-            onTap(isAr ? s.msgAr : s.msgEn);
-          });
+          return _MiniServiceChip(
+            service: s, isAr: isAr,
+            onTap: () {
+              HapticFeedback.lightImpact();
+              onTap(isAr ? s.msgAr : s.msgEn);
+            },
+          );
         },
       ),
     );
@@ -599,8 +758,10 @@ class _MiniServiceChip extends StatefulWidget {
   final _EService service;
   final bool isAr;
   final VoidCallback onTap;
-  const _MiniServiceChip({required this.service, required this.isAr, required this.onTap});
-  @override State<_MiniServiceChip> createState() => _MiniServiceChipState();
+  const _MiniServiceChip(
+      {required this.service, required this.isAr, required this.onTap});
+  @override
+  State<_MiniServiceChip> createState() => _MiniServiceChipState();
 }
 
 class _MiniServiceChipState extends State<_MiniServiceChip>
@@ -611,28 +772,41 @@ class _MiniServiceChipState extends State<_MiniServiceChip>
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 90));
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 90));
     _scale = Tween<double>(begin: 1.0, end: 0.88)
         .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
   }
-  @override void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = widget.service;
     return GestureDetector(
-      onTapDown:   (_) => _ctrl.forward(),
-      onTapUp:     (_) { _ctrl.reverse(); widget.onTap(); },
-      onTapCancel: ()  => _ctrl.reverse(),
+      onTapDown: (_) => _ctrl.forward(),
+      onTapUp: (_) {
+        _ctrl.reverse();
+        widget.onTap();
+      },
+      onTapCancel: () => _ctrl.reverse(),
       child: ScaleTransition(
         scale: _scale,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            gradient: LinearGradient(colors: s.colors,
-                begin: Alignment.topLeft, end: Alignment.bottomRight),
+            gradient: LinearGradient(
+                colors: s.colors,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight),
             borderRadius: BorderRadius.circular(12),
-            boxShadow: [BoxShadow(color: s.shadow, blurRadius: 6, offset: const Offset(0, 2))],
+            boxShadow: [
+              BoxShadow(color: s.shadow, blurRadius: 6, offset: const Offset(0, 2))
+            ],
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Text(s.emoji, style: const TextStyle(fontSize: 14)),
@@ -649,6 +823,9 @@ class _MiniServiceChipState extends State<_MiniServiceChip>
   }
 }
 
+// ════════════════════════════════════════════════════════
+//  _QuickRepliesRow — ردود سريعة
+// ════════════════════════════════════════════════════════
 class _QuickRepliesRow extends StatelessWidget {
   final List<_QR> quickReplies;
   final ValueChanged<String> onTap;
@@ -671,10 +848,14 @@ class _QuickRepliesRow extends StatelessWidget {
             decoration: BoxDecoration(
               color: const Color(0xFFEEF5FF),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.primary.withValues(alpha: 0.18)),
+              border: Border.all(
+                  color: AppColors.primary.withOpacity(0.18)),
             ),
-            child: Text(qr.label, style: GoogleFonts.cairo(
-                fontSize: 10.5, fontWeight: FontWeight.w700, color: AppColors.primary)),
+            child: Text(qr.label,
+                style: GoogleFonts.cairo(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary)),
           ),
         );
       },
@@ -682,24 +863,28 @@ class _QuickRepliesRow extends StatelessWidget {
   );
 }
 
+// ════════════════════════════════════════════════════════
+//  _ChatInputBar — شريط الإدخال
+// ════════════════════════════════════════════════════════
 class _ChatInputBar extends StatelessWidget {
   final bool isAr;
   final TextEditingController controller;
   final ValueChanged<String> onSend;
-  const _ChatInputBar({required this.isAr, required this.controller, required this.onSend});
+  const _ChatInputBar(
+      {required this.isAr, required this.controller, required this.onSend});
 
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.fromLTRB(10, 7, 10, 10),
     decoration: const BoxDecoration(
-      border: Border(top: BorderSide(color: Color(0xFFF0F2F5))),
-    ),
+        border: Border(top: BorderSide(color: Color(0xFFF0F2F5)))),
     child: Row(children: [
       Expanded(
         child: Container(
           height: 38,
           decoration: BoxDecoration(
-            color: AppColors.bg, borderRadius: BorderRadius.circular(19),
+            color: AppColors.bg,
+            borderRadius: BorderRadius.circular(19),
             border: Border.all(color: const Color(0xFFE0E4EA)),
           ),
           child: TextField(
@@ -708,10 +893,13 @@ class _ChatInputBar extends StatelessWidget {
             style: GoogleFonts.cairo(fontSize: 12.5, color: AppColors.textDark),
             onSubmitted: onSend,
             decoration: InputDecoration(
-              hintText: isAr ? 'اكتب رسالتك...' : 'Type your message...',
-              hintStyle: GoogleFonts.cairo(fontSize: 11.5, color: AppColors.textHint),
+              hintText:
+                  isAr ? 'اكتب رسالتك...' : 'Type your message...',
+              hintStyle: GoogleFonts.cairo(
+                  fontSize: 11.5, color: AppColors.textHint),
               border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             ),
           ),
         ),
@@ -721,8 +909,10 @@ class _ChatInputBar extends StatelessWidget {
         onTap: () => onSend(controller.text),
         child: Container(
           width: 38, height: 38,
-          decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
-          child: const Icon(Icons.send_rounded, color: Colors.white, size: 17),
+          decoration: const BoxDecoration(
+              color: AppColors.primary, shape: BoxShape.circle),
+          child:
+              const Icon(Icons.send_rounded, color: Colors.white, size: 17),
         ),
       ),
     ]),
@@ -730,9 +920,203 @@ class _ChatInputBar extends StatelessWidget {
 }
 
 // ════════════════════════════════════════════════════════
-//  باقي الـ classes والـ Widgets (نفس الكود السابق)
+//  _ServicesGrid — شبكة الخدمات
 // ════════════════════════════════════════════════════════
+class _ServicesGrid extends StatelessWidget {
+  final List<_EService> services;
+  final bool isAr;
+  final ValueChanged<_EService> onTap;
+  const _ServicesGrid(
+      {required this.services, required this.isAr, required this.onTap});
 
+  @override
+  Widget build(BuildContext context) => GridView.builder(
+    shrinkWrap: true,
+    physics: const NeverScrollableScrollPhysics(),
+    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: 3,
+      childAspectRatio: 0.9,
+      crossAxisSpacing: 9,
+      mainAxisSpacing: 9,
+    ),
+    itemCount: services.length,
+    itemBuilder: (_, i) => _ServiceBtn(
+        service: services[i], isAr: isAr, onTap: () => onTap(services[i])),
+  );
+}
+
+class _ServiceBtn extends StatefulWidget {
+  final _EService service;
+  final bool isAr;
+  final VoidCallback onTap;
+  const _ServiceBtn(
+      {required this.service, required this.isAr, required this.onTap});
+  @override
+  State<_ServiceBtn> createState() => _ServiceBtnState();
+}
+
+class _ServiceBtnState extends State<_ServiceBtn>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 100));
+    _scale = Tween<double>(begin: 1.0, end: 0.90)
+        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.service;
+    return GestureDetector(
+      onTapDown: (_) {
+        _ctrl.forward();
+        HapticFeedback.lightImpact();
+      },
+      onTapUp: (_) {
+        _ctrl.reverse();
+        widget.onTap();
+      },
+      onTapCancel: () => _ctrl.reverse(),
+      child: ScaleTransition(
+        scale: _scale,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFEEF0F4)),
+            boxShadow: const [
+              BoxShadow(
+                  color: Color(0x08000000),
+                  blurRadius: 6,
+                  offset: Offset(0, 2)),
+            ],
+          ),
+          child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 44, height: 44,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                        colors: s.colors,
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight),
+                    borderRadius: BorderRadius.circular(13),
+                    boxShadow: [
+                      BoxShadow(
+                          color: s.shadow,
+                          blurRadius: 8,
+                          offset: const Offset(0, 3))
+                    ],
+                  ),
+                  child: Center(
+                      child: Text(s.emoji,
+                          style: const TextStyle(fontSize: 21))),
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  widget.isAr ? s.labelAr : s.labelEn,
+                  style: GoogleFonts.cairo(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF1A2636),
+                      height: 1.1),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  widget.isAr ? s.subAr : s.subEn,
+                  style: GoogleFonts.cairo(
+                      fontSize: 9.5, color: const Color(0xFF888888)),
+                  textAlign: TextAlign.center,
+                ),
+              ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  _TipRow — تلميح أسفل الخدمات
+// ════════════════════════════════════════════════════════
+class _TipRow extends StatelessWidget {
+  final bool isAr;
+  const _TipRow({required this.isAr});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFFF8E1),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: const Color(0xFFFFCC80)),
+    ),
+    child: Row(children: [
+      const Icon(Icons.tips_and_updates_rounded,
+          color: Color(0xFFE65100), size: 13),
+      const SizedBox(width: 7),
+      Expanded(
+        child: Text(
+          isAr
+              ? 'اضغط الخدمة المناسبة للمساعدة الفورية — موقعك يُرسل تلقائياً'
+              : 'Tap the appropriate service — location auto-sent',
+          style: GoogleFonts.cairo(
+              fontSize: 10.5,
+              color: const Color(0xFFE65100),
+              height: 1.35),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    ]),
+  );
+}
+
+// ════════════════════════════════════════════════════════
+//  _SLabel — عنوان القسم
+// ════════════════════════════════════════════════════════
+class _SLabel extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+  const _SLabel(
+      {required this.icon, required this.color, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+    Container(
+      width: 26, height: 26,
+      decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(7)),
+      child: Icon(icon, color: color, size: 14),
+    ),
+    const SizedBox(width: 8),
+    Text(label,
+        style: GoogleFonts.cairo(
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+            color: AppColors.textDark)),
+  ]);
+}
+
+// ════════════════════════════════════════════════════════
+//  نماذج البيانات
+// ════════════════════════════════════════════════════════
 class _EService {
   final String emoji, labelAr, labelEn, subAr, subEn;
   final List<Color> colors;
@@ -741,203 +1125,13 @@ class _EService {
   const _EService({
     required this.emoji,
     required this.labelAr, required this.labelEn,
-    required this.subAr, required this.subEn,
-    required this.colors, required this.shadow,
-    required this.msgAr, required this.msgEn,
+    required this.subAr,   required this.subEn,
+    required this.colors,  required this.shadow,
+    required this.msgAr,   required this.msgEn,
   });
 }
 
 class _QR {
   final String label, msg;
   const _QR({required this.label, required this.msg});
-}
-
-class _BigSOSButton extends StatelessWidget {
-  final bool isAr, isActive;
-  final Animation<double> pulse;
-  final VoidCallback onTap;
-  const _BigSOSButton({required this.isAr, required this.isActive, required this.pulse, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => ScaleTransition(
-    scale: isActive ? pulse : const AlwaysStoppedAnimation(1.0),
-    child: GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        height: 100,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: isActive
-                ? const [Color(0xFF4CAF50), Color(0xFF388E3C)]
-                : const [Color(0xFFC62828), Color(0xFFE53935)],
-          ),
-          borderRadius: BorderRadius.circular(22),
-          boxShadow: [BoxShadow(
-            color: (isActive ? const Color(0xFF4CAF50) : const Color(0xFFE53935)).withValues(alpha: 0.45),
-            blurRadius: 20, offset: const Offset(0, 8),
-          )],
-        ),
-        child: Stack(children: [
-          Positioned(top: -15, left: -15, child: Container(width: 80, height: 80,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.07)))),
-          Positioned(bottom: -20, right: -10, child: Container(width: 100, height: 100,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.05)))),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 22),
-            child: Row(children: [
-              Container(
-                width: 62, height: 62,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2), shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.35), width: 2)),
-                child: Center(child: Text(isActive ? '✓' : '🆘',
-                  style: TextStyle(fontSize: isActive ? 28 : 24))),
-              ),
-              const SizedBox(width: 16),
-              Expanded(child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    isActive ? (isAr ? '✓ تم إرسال النداء!' : '✓ SOS Sent!')
-                             : (isAr ? 'استغاثة قصوى SOS' : 'Critical SOS Alert'),
-                    style: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.w900,
-                        color: Colors.white, height: 1.1)),
-                  const SizedBox(height: 3),
-                  Text(
-                    isActive ? (isAr ? 'المساعدة في الطريق إليك...' : 'Help is on the way...')
-                             : (isAr ? 'اضغط لإرسال موقعك لجميع الجهات' : 'Tap to broadcast location to all services'),
-                    style: GoogleFonts.cairo(fontSize: 11, color: Colors.white.withValues(alpha: 0.82))),
-                ],
-              )),
-              isActive
-                  ? Container(width: 14, height: 14, decoration: BoxDecoration(
-                      color: Colors.white, shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: Colors.white.withValues(alpha: 0.5), blurRadius: 8)]))
-                  : Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.22), borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.white.withValues(alpha: 0.35))),
-                      child: Text(isAr ? 'الآن' : 'NOW',
-                          style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.white))),
-            ]),
-          ),
-        ]),
-      ),
-    ),
-  );
-}
-
-class _ServicesGrid extends StatelessWidget {
-  final List<_EService> services;
-  final bool isAr;
-  final ValueChanged<_EService> onTap;
-  const _ServicesGrid({required this.services, required this.isAr, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => GridView.builder(
-    shrinkWrap: true,
-    physics: const NeverScrollableScrollPhysics(),
-    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: 4,
-      childAspectRatio: 0.82,
-      crossAxisSpacing: 9,
-      mainAxisSpacing: 9,
-    ),
-    itemCount: services.length,
-    itemBuilder: (_, i) => _ServiceBtn(service: services[i], isAr: isAr, onTap: () => onTap(services[i])),
-  );
-}
-
-class _ServiceBtn extends StatefulWidget {
-  final _EService service; final bool isAr; final VoidCallback onTap;
-  const _ServiceBtn({required this.service, required this.isAr, required this.onTap});
-  @override State<_ServiceBtn> createState() => _ServiceBtnState();
-}
-
-class _ServiceBtnState extends State<_ServiceBtn> with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _scale;
-  @override void initState() {
-    super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 100));
-    _scale = Tween<double>(begin: 1.0, end: 0.90).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
-  }
-  @override void dispose() { _ctrl.dispose(); super.dispose(); }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = widget.service;
-    return GestureDetector(
-      onTapDown:   (_) { _ctrl.forward(); HapticFeedback.lightImpact(); },
-      onTapUp:     (_) { _ctrl.reverse(); widget.onTap(); },
-      onTapCancel: ()  => _ctrl.reverse(),
-      child: ScaleTransition(
-        scale: _scale,
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(colors: s.colors, begin: Alignment.topLeft, end: Alignment.bottomRight),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [BoxShadow(color: s.shadow, blurRadius: 10, offset: const Offset(0, 4))],
-          ),
-          child: Stack(children: [
-            Positioned(top: -8, right: -8, child: Container(width: 32, height: 32,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.1)))),
-            Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Container(width: 38, height: 38,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.22), borderRadius: BorderRadius.circular(11)),
-                child: Center(child: Text(s.emoji, style: const TextStyle(fontSize: 19)))),
-              const SizedBox(height: 6),
-              Text(widget.isAr ? s.labelAr : s.labelEn,
-                style: GoogleFonts.cairo(fontSize: 11.5, fontWeight: FontWeight.w900, color: Colors.white, height: 1.1),
-                textAlign: TextAlign.center),
-              const SizedBox(height: 2),
-              Text(widget.isAr ? s.subAr : s.subEn,
-                style: GoogleFonts.cairo(fontSize: 9, color: Colors.white.withValues(alpha: 0.75)),
-                textAlign: TextAlign.center),
-            ])),
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
-class _TipRow extends StatelessWidget {
-  final bool isAr;
-  const _TipRow({required this.isAr});
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-    decoration: BoxDecoration(
-      color: const Color(0xFFFFF8E1), borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: const Color(0xFFFFCC80))),
-    child: Row(children: [
-      const Icon(Icons.tips_and_updates_rounded, color: Color(0xFFE65100), size: 13),
-      const SizedBox(width: 7),
-      Expanded(child: Text(
-        isAr
-            ? 'اضغط الخدمة المناسبة للمساعدة الفورية — موقعك يُرسل تلقائياً'
-            : 'Tap the appropriate service — location auto-sent',
-        style: GoogleFonts.cairo(fontSize: 10.5, color: const Color(0xFFE65100), height: 1.35),
-        maxLines: 1, overflow: TextOverflow.ellipsis)),
-    ]),
-  );
-}
-
-class _SLabel extends StatelessWidget {
-  final IconData icon; final Color color; final String label;
-  const _SLabel({required this.icon, required this.color, required this.label});
-  @override
-  Widget build(BuildContext context) => Row(children: [
-    Container(width: 26, height: 26,
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(7)),
-      child: Icon(icon, color: color, size: 14)),
-    const SizedBox(width: 8),
-    Text(label, style: GoogleFonts.cairo(fontSize: 14, fontWeight: FontWeight.w800, color: AppColors.textDark)),
-  ]);
 }

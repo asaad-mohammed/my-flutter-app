@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'splash_screen.dart';
 
 class NoInternetScreen extends StatelessWidget {
-  final VoidCallback onRetry;
-  const NoInternetScreen({super.key, required this.onRetry});
+  /// لم يعد يُستخدم للتنقل اليدوي — أصبح الزر يعيد تشغيل SplashScreen
+  /// بالكامل تلقائياً. أبقيناه اختيارياً للتوافق مع أي استدعاء قديم.
+  final VoidCallback? onRetry;
+  const NoInternetScreen({super.key, this.onRetry});
 
   // روابط الاشتراك بالإنترنت عبر الرصيد
   static const _operators = [
@@ -51,6 +54,15 @@ class NoInternetScreen extends StatelessWidget {
     ),
   ];
 
+  /// يعيد تشغيل التطبيق بالكامل من شاشة Splash (الأنيميشن + كل
+  /// الفحوصات من الصفر)، بدل الرجوع فقط للسياق السابق.
+  void _restartFromSplash(BuildContext context) {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const SplashScreen()),
+      (route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -89,7 +101,7 @@ class NoInternetScreen extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: onRetry,
+                      onPressed: () => _restartFromSplash(context),
                       icon: const Icon(Icons.refresh_rounded),
                       label: const Text('إعادة المحاولة'),
                       style: ElevatedButton.styleFrom(

@@ -1,472 +1,603 @@
 // lib/core/providers/zone_provider.dart
 // ════════════════════════════════════════════════════════
-//  core/providers/zone_provider.dart
-//  مزوّد بيانات تحليل البيئة الصحية
+//  نظام رصد الحالات المرضية والظواهر الصحية
 // ════════════════════════════════════════════════════════
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:latlong2/latlong.dart';
 
-// تعريفات إضافية للنماذج المستخدمة
-enum DiseaseRisk { low, medium, high, critical }
-enum TrendDir { rising, falling, stable }
-enum ZoneStatus { safe, watch, warning, danger }
-
-class TrackedDisease {
-  final String id;
-  final String nameAr;
-  final String nameEn;
-  final String emoji;
-  final int casesCount;
-  final int casesChange;
-  final DiseaseRisk risk;
-  final TrendDir trend;
-  final Color color;
-  final List<String> symptomsAr;
-  final List<String> symptomsEn;
-  final List<String> preventionAr;
-  final List<String> preventionEn;
-
-  const TrackedDisease({
-    required this.id,
-    required this.nameAr,
-    required this.nameEn,
-    required this.emoji,
-    required this.casesCount,
-    required this.casesChange,
-    required this.risk,
-    required this.trend,
-    required this.color,
-    required this.symptomsAr,
-    required this.symptomsEn,
-    required this.preventionAr,
-    required this.preventionEn,
-  });
+// ─── أنواع الحالات المسجلة ─────────────────────────────
+enum CaseType {
+  drowning,      // غرق
+  foodPoisoning, // تسمم غذائي
+  flu,           // إنفلونزا
+  heatStroke,    // ضربة شمس
+  dengue,        // حمى الضنك
+  accident,      // حادث
+  other,         // أخرى
 }
 
-class HealthZone {
+extension CaseTypeExtension on CaseType {
+  String getLabel(bool isAr) {
+    switch (this) {
+      case CaseType.drowning:
+        return isAr ? 'غرق' : 'Drowning';
+      case CaseType.foodPoisoning:
+        return isAr ? 'تسمم غذائي' : 'Food Poisoning';
+      case CaseType.flu:
+        return isAr ? 'إنفلونزا' : 'Flu';
+      case CaseType.heatStroke:
+        return isAr ? 'ضربة شمس' : 'Heat Stroke';
+      case CaseType.dengue:
+        return isAr ? 'حمى الضنك' : 'Dengue';
+      case CaseType.accident:
+        return isAr ? 'حادث' : 'Accident';
+      case CaseType.other:
+        return isAr ? 'أخرى' : 'Other';
+    }
+  }
+
+  Color getColor() {
+    switch (this) {
+      case CaseType.drowning:
+        return Colors.blue.shade800;
+      case CaseType.foodPoisoning:
+        return Colors.orange.shade700;
+      case CaseType.flu:
+        return Colors.purple.shade600;
+      case CaseType.heatStroke:
+        return Colors.red.shade700;
+      case CaseType.dengue:
+        return Colors.red.shade900;
+      case CaseType.accident:
+        return Colors.amber.shade800;
+      case CaseType.other:
+        return Colors.grey.shade600;
+    }
+  }
+
+  IconData getIcon() {
+    switch (this) {
+      case CaseType.drowning:
+        return Icons.water_drop_rounded;
+      case CaseType.foodPoisoning:
+        return Icons.restaurant_rounded;
+      case CaseType.flu:
+        return Icons.sick_rounded;
+      case CaseType.heatStroke:
+        return Icons.wb_sunny_rounded;
+      case CaseType.dengue:
+        return Icons.bug_report_rounded;
+      case CaseType.accident:
+        return Icons.car_crash_rounded;
+      case CaseType.other:
+        return Icons.help_outline_rounded;
+    }
+  }
+}
+
+// ─── مستوى الخطر ─────────────────────────────────────────
+enum CaseRiskLevel {
+  low,      // منخفض
+  medium,   // متوسط
+  high,     // مرتفع
+  critical, // حرج
+}
+
+// ─── الحالة المرضية المبلّغ عنها ──────────────────────
+class ReportedCase {
+  final String id;
+  final CaseType type;
+  final String titleAr;
+  final String titleEn;
+  final String descriptionAr;
+  final String descriptionEn;
+  final LatLng position;
+  final String locationNameAr;
+  final String locationNameEn;
+  final DateTime reportedAt;
+  final int affectedCount;      // عدد المصابين
+  final CaseRiskLevel riskLevel;
+  final bool isActive;          // هل الحالة لا تزال نشطة؟
+  final String? imageUrl;
+  final List<String> precautionsAr;
+  final List<String> precautionsEn;
+
+  ReportedCase({
+    required this.id,
+    required this.type,
+    required this.titleAr,
+    required this.titleEn,
+    required this.descriptionAr,
+    required this.descriptionEn,
+    required this.position,
+    required this.locationNameAr,
+    required this.locationNameEn,
+    required this.reportedAt,
+    required this.affectedCount,
+    required this.riskLevel,
+    required this.isActive,
+    this.imageUrl,
+    this.precautionsAr = const [],
+    this.precautionsEn = const [],
+  });
+
+  // حساب شدة الخطر بناءً على عدد المصابين ونوع الحالة
+  double get intensity {
+    final base = affectedCount / 10;
+    switch (riskLevel) {
+      case CaseRiskLevel.low:
+        return base * 0.5;
+      case CaseRiskLevel.medium:
+        return base * 1.0;
+      case CaseRiskLevel.high:
+        return base * 1.8;
+      case CaseRiskLevel.critical:
+        return base * 3.0;
+    }
+  }
+
+  Color get color => type.getColor();
+  IconData get icon => type.getIcon();
+
+  String getRiskLabel(bool isAr) {
+    switch (riskLevel) {
+      case CaseRiskLevel.low:
+        return isAr ? 'منخفض' : 'Low';
+      case CaseRiskLevel.medium:
+        return isAr ? 'متوسط' : 'Medium';
+      case CaseRiskLevel.high:
+        return isAr ? 'مرتفع' : 'High';
+      case CaseRiskLevel.critical:
+        return isAr ? 'حرج' : 'Critical';
+    }
+  }
+
+  Color getRiskColor() {
+    switch (riskLevel) {
+      case CaseRiskLevel.low:
+        return Colors.green;
+      case CaseRiskLevel.medium:
+        return Colors.orange;
+      case CaseRiskLevel.high:
+        return Colors.deepOrange;
+      case CaseRiskLevel.critical:
+        return Colors.red;
+    }
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'type': type.index,
+    'titleAr': titleAr,
+    'titleEn': titleEn,
+    'descriptionAr': descriptionAr,
+    'descriptionEn': descriptionEn,
+    'latitude': position.latitude,
+    'longitude': position.longitude,
+    'locationNameAr': locationNameAr,
+    'locationNameEn': locationNameEn,
+    'reportedAt': reportedAt.toIso8601String(),
+    'affectedCount': affectedCount,
+    'riskLevel': riskLevel.index,
+    'isActive': isActive,
+    'precautionsAr': precautionsAr,
+    'precautionsEn': precautionsEn,
+  };
+
+  factory ReportedCase.fromJson(Map<String, dynamic> json) {
+    return ReportedCase(
+      id: json['id'],
+      type: CaseType.values[json['type']],
+      titleAr: json['titleAr'],
+      titleEn: json['titleEn'],
+      descriptionAr: json['descriptionAr'],
+      descriptionEn: json['descriptionEn'],
+      position: LatLng(json['latitude'], json['longitude']),
+      locationNameAr: json['locationNameAr'],
+      locationNameEn: json['locationNameEn'],
+      reportedAt: DateTime.parse(json['reportedAt']),
+      affectedCount: json['affectedCount'],
+      riskLevel: CaseRiskLevel.values[json['riskLevel']],
+      isActive: json['isActive'],
+      precautionsAr: List<String>.from(json['precautionsAr']),
+      precautionsEn: List<String>.from(json['precautionsEn']),
+    );
+  }
+}
+
+// ─── المنطقة الصحية مع الحالات المبلّغة ──────────────
+class HealthZoneWithCases {
   final String id;
   final String nameAr;
   final String nameEn;
   final String districtAr;
   final String districtEn;
-  final double lat;
-  final double lng;
+  final LatLng center;
   final double radiusKm;
-  final ZoneStatus status;
-  final int totalCases;
-  final int activeCases;
-  final int population;
-  final double temperatureC;
-  final double humidityPct;
-  final double airQualityIndex;
-  final List<TrackedDisease> diseases;
-  final List<String> alertsAr;
-  final List<String> alertsEn;
+  final List<ReportedCase> activeCases;
   final DateTime lastUpdated;
-  final DiseaseRisk forecastRisk;
-  final String forecastNoteAr;
-  final String forecastNoteEn;
 
-  const HealthZone({
+  HealthZoneWithCases({
     required this.id,
     required this.nameAr,
     required this.nameEn,
     required this.districtAr,
     required this.districtEn,
-    required this.lat,
-    required this.lng,
+    required this.center,
     required this.radiusKm,
-    required this.status,
-    required this.totalCases,
     required this.activeCases,
-    required this.population,
-    required this.temperatureC,
-    required this.humidityPct,
-    required this.airQualityIndex,
-    required this.diseases,
-    required this.alertsAr,
-    required this.alertsEn,
     required this.lastUpdated,
-    required this.forecastRisk,
-    required this.forecastNoteAr,
-    required this.forecastNoteEn,
   });
 
-  double get activePercentage => population > 0 ? (activeCases / population) * 10000 : 0;
+  int get totalActiveCases => activeCases.length;
+  int get totalAffected => activeCases.fold(0, (sum, c) => sum + c.affectedCount);
 
-  String getStatusLabel(bool isAr) {
-    switch (status) {
-      case ZoneStatus.safe:
-        return isAr ? 'آمن' : 'Safe';
-      case ZoneStatus.watch:
-        return isAr ? 'مراقبة' : 'Watch';
-      case ZoneStatus.warning:
-        return isAr ? 'تحذير' : 'Warning';
-      case ZoneStatus.danger:
-        return isAr ? 'خطر' : 'Danger';
-    }
+  // الحالات الأكثر خطورة
+  List<ReportedCase> get criticalCases =>
+      activeCases.where((c) => c.riskLevel == CaseRiskLevel.critical).toList();
+
+  // مؤشر الخطر الإجمالي للمنطقة
+  double get overallRiskScore {
+    if (activeCases.isEmpty) return 0;
+    final scores = activeCases.map((c) {
+      final riskMultiplier = switch (c.riskLevel) {
+        CaseRiskLevel.low => 1,
+        CaseRiskLevel.medium => 2,
+        CaseRiskLevel.high => 3,
+        CaseRiskLevel.critical => 5,
+      };
+      return c.affectedCount * riskMultiplier;
+    });
+    return scores.reduce((a, b) => a + b) / 100;
   }
 
-  Color getStatusColor() {
-    switch (status) {
-      case ZoneStatus.safe:
+  // مستوى الخطر الكلي
+  CaseRiskLevel get overallRisk {
+    final score = overallRiskScore;
+    if (score < 1) return CaseRiskLevel.low;
+    if (score < 3) return CaseRiskLevel.medium;
+    if (score < 6) return CaseRiskLevel.high;
+    return CaseRiskLevel.critical;
+  }
+
+  Color getRiskColor() {
+    switch (overallRisk) {
+      case CaseRiskLevel.low:
         return Colors.green;
-      case ZoneStatus.watch:
+      case CaseRiskLevel.medium:
         return Colors.orange;
-      case ZoneStatus.warning:
+      case CaseRiskLevel.high:
         return Colors.deepOrange;
-      case ZoneStatus.danger:
+      case CaseRiskLevel.critical:
         return Colors.red;
     }
   }
+
+  String getRiskLabel(bool isAr) {
+    switch (overallRisk) {
+      case CaseRiskLevel.low:
+        return isAr ? 'آمن' : 'Safe';
+      case CaseRiskLevel.medium:
+        return isAr ? 'مراقبة' : 'Watch';
+      case CaseRiskLevel.high:
+        return isAr ? 'تحذير' : 'Warning';
+      case CaseRiskLevel.critical:
+        return isAr ? 'خطر' : 'Danger';
+    }
+  }
 }
 
-class ZoneHealthReport {
-  final String zoneId;
-  final DateTime generatedAt;
-  final int weeklyNewCases;
-  final int weeklyRecovered;
-  final double reproductionNumber;
-  final String aiAnalysisAr;
-  final String aiAnalysisEn;
-  final List<String> recommendationsAr;
-  final List<String> recommendationsEn;
+// ─── البيانات التجريبية ──────────────────────────────────
 
-  ZoneHealthReport({
-    required this.zoneId,
-    required this.generatedAt,
-    required this.weeklyNewCases,
-    required this.weeklyRecovered,
-    required this.reproductionNumber,
-    required this.aiAnalysisAr,
-    required this.aiAnalysisEn,
-    required this.recommendationsAr,
-    required this.recommendationsEn,
-  });
-}
+// استخدام دالة Distance لحساب المسافات
+final Distance _distance = const Distance();
 
-// بيانات الأمراض التجريبية
-const _flu = TrackedDisease(
-  id: 'flu',
-  nameAr: 'الإنفلونزا الموسمية',
-  nameEn: 'Seasonal Flu',
-  emoji: '🤧',
-  casesCount: 847,
-  casesChange: 23,
-  risk: DiseaseRisk.medium,
-  trend: TrendDir.rising,
-  color: Color(0xFFF57C00),
-  symptomsAr: ['حمى مفاجئة', 'صداع شديد', 'آلام في الجسم', 'سعال جاف', 'إرهاق'],
-  symptomsEn: ['Sudden fever', 'Severe headache', 'Body aches', 'Dry cough', 'Fatigue'],
-  preventionAr: ['غسل اليدين باستمرار', 'تجنب الأماكن المكتظة', 'التطعيم السنوي', 'استخدام الكمامة'],
-  preventionEn: ['Wash hands frequently', 'Avoid crowded places', 'Annual vaccination', 'Wear mask'],
-);
+// مواقع افتراضية في البصرة
+const _basraLocations = {
+  'سوق القيصرية': LatLng(30.5200, 47.7850),
+  'شط العرب': LatLng(30.5100, 47.7900),
+  'حي الزيتون': LatLng(30.4980, 47.7750),
+  'ميناء المعقل': LatLng(30.5300, 47.7800),
+  'الجامعة': LatLng(30.5150, 47.7700),
+};
 
-const _gastro = TrackedDisease(
-  id: 'gastro',
-  nameAr: 'التهاب المعدة والأمعاء',
-  nameEn: 'Gastroenteritis',
-  emoji: '🦠',
-  casesCount: 312,
-  casesChange: -18,
-  risk: DiseaseRisk.high,
-  trend: TrendDir.falling,
-  color: Color(0xFFB71C1C),
-  symptomsAr: ['إسهال مائي', 'قيء', 'مغص بطني', 'حمى خفيفة', 'جفاف'],
-  symptomsEn: ['Watery diarrhea', 'Vomiting', 'Abdominal cramps', 'Low fever', 'Dehydration'],
-  preventionAr: ['شرب ماء معقم', 'غسل الخضروات جيداً', 'طبخ اللحوم جيداً', 'تجنب الطعام الشارعي'],
-  preventionEn: ['Drink purified water', 'Wash vegetables thoroughly', 'Cook meat well', 'Avoid street food'],
-);
+// حالات تجريبية
+final List<ReportedCase> _mockCases = [
+  ReportedCase(
+    id: 'case_1',
+    type: CaseType.drowning,
+    titleAr: 'حالة غرق في شط العرب',
+    titleEn: 'Drowning incident in Shatt Al-Arab',
+    descriptionAr: 'تم الإبلاغ عن حالة غرق لطفل بالقرب من ضفاف شط العرب. يرجى الحذر عند الاقتراب من المياه.',
+    descriptionEn: 'A child drowning incident reported near Shatt Al-Arab banks. Please exercise caution near water.',
+    position: _basraLocations['شط العرب']!,
+    locationNameAr: 'شط العرب - البصرة',
+    locationNameEn: 'Shatt Al-Arab - Basra',
+    reportedAt: DateTime.now().subtract(const Duration(hours: 3)),
+    affectedCount: 1,
+    riskLevel: CaseRiskLevel.critical,
+    isActive: true,
+    precautionsAr: ['تجنب السباحة في المناطق غير المخصصة', 'إبقاء الأطفال بعيداً عن المياه'],
+    precautionsEn: ['Avoid swimming in unauthorized areas', 'Keep children away from water'],
+  ),
+  ReportedCase(
+    id: 'case_2',
+    type: CaseType.foodPoisoning,
+    titleAr: 'تسمم غذائي في مطعم السياح',
+    titleEn: 'Food poisoning at Al-Siyah Restaurant',
+    descriptionAr: 'تم تسجيل 8 حالات تسمم غذائي بعد تناول وجبات من مطعم السياح في سوق القيصرية.',
+    descriptionEn: '8 food poisoning cases recorded after meals at Al-Siyah Restaurant in Al-Qaisariya Market.',
+    position: _basraLocations['سوق القيصرية']!,
+    locationNameAr: 'سوق القيصرية - البصرة',
+    locationNameEn: 'Al-Qaisariya Market - Basra',
+    reportedAt: DateTime.now().subtract(const Duration(hours: 6)),
+    affectedCount: 8,
+    riskLevel: CaseRiskLevel.high,
+    isActive: true,
+    precautionsAr: ['تجنب تناول الطعام من المطعم', 'شرب المياه المعبأة', 'مراجعة الطبيب في حال ظهور أعراض'],
+    precautionsEn: ['Avoid eating from the restaurant', 'Drink bottled water', 'See a doctor if symptoms appear'],
+  ),
+  ReportedCase(
+    id: 'case_3',
+    type: CaseType.heatStroke,
+    titleAr: 'ضربة شمس في ميناء المعقل',
+    titleEn: 'Heat stroke at Al-Maqal Port',
+    descriptionAr: 'تم نقل 5 عمال إلى المستشفى إثر تعرضهم لضربة شمس أثناء العمل في ميناء المعقل تحت حرارة 48°م.',
+    descriptionEn: '5 workers hospitalized due to heat stroke while working at Al-Maqal Port under 48°C heat.',
+    position: _basraLocations['ميناء المعقل']!,
+    locationNameAr: 'ميناء المعقل - البصرة',
+    locationNameEn: 'Al-Maqal Port - Basra',
+    reportedAt: DateTime.now().subtract(const Duration(hours: 2)),
+    affectedCount: 5,
+    riskLevel: CaseRiskLevel.high,
+    isActive: true,
+    precautionsAr: ['تجنب العمل تحت الشمس المباشرة 12-4م', 'شرب الماء بكثرة', 'ارتداء ملابس فاتحة'],
+    precautionsEn: ['Avoid direct sun work 12-4pm', 'Drink plenty of water', 'Wear light clothing'],
+  ),
+  ReportedCase(
+    id: 'case_4',
+    type: CaseType.dengue,
+    titleAr: 'حالة حمى ضنك مشتبهة في حي الزيتون',
+    titleEn: 'Suspected dengue case in Al-Zaytoon district',
+    descriptionAr: 'تم الإبلاغ عن حالة مشتبهة بحمى الضنك في حي الزيتون. تم أخذ العينات للفحص المخبري.',
+    descriptionEn: 'Suspected dengue case reported in Al-Zaytoon district. Samples sent for lab testing.',
+    position: _basraLocations['حي الزيتون']!,
+    locationNameAr: 'حي الزيتون - البصرة',
+    locationNameEn: 'Al-Zaytoon district - Basra',
+    reportedAt: DateTime.now().subtract(const Duration(hours: 8)),
+    affectedCount: 1,
+    riskLevel: CaseRiskLevel.critical,
+    isActive: true,
+    precautionsAr: ['مكافحة البعوض', 'إزالة المياه الراكدة', 'استخدام الناموسيات'],
+    precautionsEn: ['Mosquito control', 'Remove stagnant water', 'Use bed nets'],
+  ),
+  ReportedCase(
+    id: 'case_5',
+    type: CaseType.accident,
+    titleAr: 'حادث سير في الجامعة',
+    titleEn: 'Car accident near University',
+    descriptionAr: 'حادث تصادم بين سيارتين بالقرب من بوابة جامعة البصرة، تم نقل 3 مصابين للمستشفى.',
+    descriptionEn: 'Two-car collision near Basra University gate, 3 injured transferred to hospital.',
+    position: _basraLocations['الجامعة']!,
+    locationNameAr: 'جامعة البصرة',
+    locationNameEn: 'Basra University',
+    reportedAt: DateTime.now().subtract(const Duration(hours: 1)),
+    affectedCount: 3,
+    riskLevel: CaseRiskLevel.medium,
+    isActive: true,
+    precautionsAr: ['القيادة بحذر في المنطقة', 'الالتزام بالسرعة المحددة'],
+    precautionsEn: ['Drive cautiously in the area', 'Observe speed limits'],
+  ),
+];
 
-const _dengue = TrackedDisease(
-  id: 'dengue',
-  nameAr: 'حمى الضنك',
-  nameEn: 'Dengue Fever',
-  emoji: '🦟',
-  casesCount: 45,
-  casesChange: 8,
-  risk: DiseaseRisk.critical,
-  trend: TrendDir.rising,
-  color: Color(0xFFC62828),
-  symptomsAr: ['حمى شديدة مفاجئة', 'صداع خلف العينين', 'طفح جلدي', 'ألم المفاصل الشديد'],
-  symptomsEn: ['Sudden high fever', 'Pain behind eyes', 'Skin rash', 'Severe joint pain'],
-  preventionAr: ['مكافحة البعوض', 'استخدام ناموسيات', 'إزالة مياه راكدة', 'طارد الحشرات'],
-  preventionEn: ['Mosquito control', 'Use bed nets', 'Remove standing water', 'Use insect repellent'],
-);
-
-const _conjunctivitis = TrackedDisease(
-  id: 'conj',
-  nameAr: 'التهاب الملتحمة (العيون الحمراء)',
-  nameEn: 'Conjunctivitis',
-  emoji: '👁️',
-  casesCount: 203,
-  casesChange: 41,
-  risk: DiseaseRisk.medium,
-  trend: TrendDir.rising,
-  color: Color(0xFFE53935),
-  symptomsAr: ['احمرار العين', 'إفرازات صفراء', 'حكة وحرقان', 'تورم الجفن'],
-  symptomsEn: ['Eye redness', 'Yellow discharge', 'Itching and burning', 'Eyelid swelling'],
-  preventionAr: ['عدم لمس العيون', 'غسل اليدين', 'عدم مشاركة المناشف', 'تجنب المصابين'],
-  preventionEn: ['Avoid touching eyes', 'Wash hands', 'No sharing towels', 'Avoid infected persons'],
-);
-
-const _heatExhaustion = TrackedDisease(
-  id: 'heat',
-  nameAr: 'الإجهاد الحراري / ضربة الشمس',
-  nameEn: 'Heat Exhaustion',
-  emoji: '🌡️',
-  casesCount: 128,
-  casesChange: 55,
-  risk: DiseaseRisk.high,
-  trend: TrendDir.rising,
-  color: Color(0xFFF9A825),
-  symptomsAr: ['دوار وإغماء', 'تعرق مفرط', 'غثيان', 'جلد أحمر وجاف', 'ارتفاع حرارة الجسم'],
-  symptomsEn: ['Dizziness/fainting', 'Excessive sweating', 'Nausea', 'Red dry skin', 'High body temperature'],
-  preventionAr: ['تجنب الخروج 12-4 مساءً', 'شرب ماء كافٍ', 'ملابس خفيفة فاتحة', 'البقاء في مكان بارد'],
-  preventionEn: ['Avoid outdoors 12-4pm', 'Stay well hydrated', 'Wear light clothing', 'Stay in cool places'],
-);
-
-// مناطق البصرة الصحية
-final List<HealthZone> _mockZones = [
-  HealthZone(
+// مناطق البصرة مع الحالات
+final List<HealthZoneWithCases> _mockZonesWithCases = [
+  HealthZoneWithCases(
     id: 'basra_center',
     nameAr: 'مركز البصرة',
     nameEn: 'Basra Center',
     districtAr: 'البصرة',
     districtEn: 'Basra',
-    lat: 30.5085,
-    lng: 47.7804,
+    center: LatLng(30.5085, 47.7804),
     radiusKm: 5.0,
-    status: ZoneStatus.warning,
-    totalCases: 1247,
-    activeCases: 312,
-    population: 285000,
-    temperatureC: 44.0,
-    humidityPct: 62.0,
-    airQualityIndex: 185.0,
-    diseases: [_flu, _gastro, _heatExhaustion],
-    alertsAr: [
-      'ارتفاع حالات الإنفلونزا بنسبة 23% هذا الأسبوع',
-      'مياه الشرب: يُنصح بغلي الماء قبل الاستخدام',
-      'حرارة شديدة متوقعة — تجنب الخروج بين 12-4 مساءً',
-    ],
-    alertsEn: [
-      'Flu cases up 23% this week',
-      'Water advisory: boil water before use',
-      'Extreme heat expected — avoid outdoors 12-4pm',
-    ],
-    lastUpdated: DateTime.now().subtract(const Duration(hours: 3)),
-    forecastRisk: DiseaseRisk.high,
-    forecastNoteAr: 'متوقع ارتفاع إضافي في الأسبوع القادم بسبب موجة الحر',
-    forecastNoteEn: 'Expected further rise next week due to heat wave',
+    activeCases: _mockCases.where((c) => c.isActive).toList(),
+    lastUpdated: DateTime.now(),
   ),
-  HealthZone(
-    id: 'basra_north',
-    nameAr: 'شمال البصرة',
-    nameEn: 'North Basra',
-    districtAr: 'البصرة',
-    districtEn: 'Basra',
-    lat: 30.6200,
-    lng: 47.8000,
-    radiusKm: 6.0,
-    status: ZoneStatus.danger,
-    totalCases: 523,
-    activeCases: 178,
-    population: 195000,
-    temperatureC: 45.0,
-    humidityPct: 58.0,
-    airQualityIndex: 220.0,
-    diseases: [_dengue, _flu, _conjunctivitis],
-    alertsAr: [
-      '🚨 تحذير: رصد حالات حمى الضنك — تجنب مناطق المياه الراكدة',
-      'التهاب الملتحمة في تصاعد — تجنب الأماكن المكتظة',
-      'جودة الهواء سيئة — استخدم كمامة عند الخروج',
-    ],
-    alertsEn: [
-      '🚨 Alert: Dengue cases detected — avoid stagnant water areas',
-      'Conjunctivitis rising — avoid crowded areas',
-      'Poor air quality — wear mask outdoors',
-    ],
-    lastUpdated: DateTime.now().subtract(const Duration(hours: 1)),
-    forecastRisk: DiseaseRisk.critical,
-    forecastNoteAr: 'وضع حرج — يستوجب التدخل الصحي العاجل ومكافحة البعوض',
-    forecastNoteEn: 'Critical situation — requires urgent health intervention and mosquito control',
-  ),
-  HealthZone(
-    id: 'basra_south',
-    nameAr: 'جنوب البصرة',
-    nameEn: 'South Basra',
-    districtAr: 'البصرة',
-    districtEn: 'Basra',
-    lat: 30.3900,
-    lng: 47.7200,
-    radiusKm: 7.0,
-    status: ZoneStatus.watch,
-    totalCases: 189,
-    activeCases: 54,
-    population: 142000,
-    temperatureC: 42.0,
-    humidityPct: 68.0,
-    airQualityIndex: 145.0,
-    diseases: [_gastro, _heatExhaustion],
-    alertsAr: [
-      'التهاب المعدة في انخفاض — استمر بإجراءات الوقاية',
-      'اشرب الماء المعبّأ أو المغلي فقط',
-    ],
-    alertsEn: [
-      'Gastro cases declining — continue prevention measures',
-      'Drink only bottled or boiled water',
-    ],
-    lastUpdated: DateTime.now().subtract(const Duration(hours: 6)),
-    forecastRisk: DiseaseRisk.medium,
-    forecastNoteAr: 'الوضع تحت السيطرة مع مراقبة مستمرة',
-    forecastNoteEn: 'Situation under control with ongoing monitoring',
-  ),
-  HealthZone(
-    id: 'basra_west',
-    nameAr: 'غرب البصرة',
-    nameEn: 'West Basra',
-    districtAr: 'البصرة',
-    districtEn: 'Basra',
-    lat: 30.5000,
-    lng: 47.6500,
-    radiusKm: 5.5,
-    status: ZoneStatus.safe,
-    totalCases: 67,
-    activeCases: 12,
-    population: 98000,
-    temperatureC: 41.0,
-    humidityPct: 55.0,
-    airQualityIndex: 95.0,
-    diseases: [_flu],
-    alertsAr: ['الوضع الصحي مستقر — استمر بالوقاية الاعتيادية'],
-    alertsEn: ['Health situation stable — continue routine prevention'],
-    lastUpdated: DateTime.now().subtract(const Duration(hours: 8)),
-    forecastRisk: DiseaseRisk.low,
-    forecastNoteAr: 'لا توقعات سلبية للأسبوع القادم',
-    forecastNoteEn: 'No negative forecasts for next week',
-  ),
+  // يمكن إضافة مناطق أخرى مع حالات مختلفة
 ];
 
-final List<ZoneHealthReport> _mockReports = [
-  ZoneHealthReport(
-    zoneId: 'basra_north',
-    generatedAt: DateTime.now().subtract(const Duration(hours: 2)),
-    weeklyNewCases: 178,
-    weeklyRecovered: 43,
-    reproductionNumber: 1.8,
-    aiAnalysisAr:
-        'الوضع الوبائي في شمال البصرة يُظهر نمطاً مقلقاً. رقم التكاثر الأساسي R=1.8 يعني أن كل حالة تُعدي 1.8 شخص في المتوسط، مما يستدعي تدخلاً عاجلاً. تزامن حمى الضنك مع ارتفاع الحرارة وتجمّع المياه الراكدة يُنذر بتفاقم الوضع.',
-    aiAnalysisEn:
-        'The epidemiological situation in North Basra shows a concerning pattern. Reproduction number R=1.8 means each case infects 1.8 people on average, requiring urgent intervention. The combination of dengue with high temperatures and stagnant water signals potential worsening.',
-    recommendationsAr: [
-      'رش مبيدات البعوض فوراً في المناطق المتضررة',
-      'إغلاق مصادر المياه الراكدة',
-      'نشر فرق طبية متنقلة في المناطق المصابة',
-      'إلزام المواطنين بارتداء الكمامة في الأماكن العامة',
-      'فتح مراكز طبية مؤقتة للفحص المجاني',
-    ],
-    recommendationsEn: [
-      'Immediately spray insecticides in affected areas',
-      'Eliminate all sources of stagnant water',
-      'Deploy mobile medical teams in affected areas',
-      'Mandate masks in public spaces',
-      'Open temporary medical centers for free screening',
-    ],
-  ),
-];
-
-// ════════════════════════════════════════════════════════
-//  ZoneState
-// ════════════════════════════════════════════════════════
+// ─── ZoneState ────────────────────────────────────────────
 class ZoneState {
-  final List<HealthZone> zones;
-  final List<ZoneHealthReport> reports;
+  final List<HealthZoneWithCases> zones;
+  final List<ReportedCase> allCases;
   final String? selectedZoneId;
   final bool isLoading;
-  final bool isAnalyzing;
+  final bool isReporting;
 
   const ZoneState({
     this.zones = const [],
-    this.reports = const [],
+    this.allCases = const [],
     this.selectedZoneId,
     this.isLoading = false,
-    this.isAnalyzing = false,
+    this.isReporting = false,
   });
 
-  HealthZone? get selectedZone =>
-      selectedZoneId != null
-          ? zones.firstWhere((z) => z.id == selectedZoneId, orElse: () => zones.first)
-          : null;
-
-  ZoneHealthReport? reportFor(String zoneId) {
+  HealthZoneWithCases? get selectedZone {
+    if (selectedZoneId == null) return zones.isNotEmpty ? zones.first : null;
     try {
-      return reports.firstWhere((r) => r.zoneId == zoneId);
+      return zones.firstWhere((z) => z.id == selectedZoneId);
     } catch (_) {
-      return null;
+      return zones.isNotEmpty ? zones.first : null;
     }
   }
 
+  List<ReportedCase> get activeCases => allCases.where((c) => c.isActive).toList();
+
   ZoneState copyWith({
-    List<HealthZone>? zones,
-    List<ZoneHealthReport>? reports,
+    List<HealthZoneWithCases>? zones,
+    List<ReportedCase>? allCases,
     String? selectedZoneId,
     bool? isLoading,
-    bool? isAnalyzing,
+    bool? isReporting,
   }) =>
       ZoneState(
         zones: zones ?? this.zones,
-        reports: reports ?? this.reports,
+        allCases: allCases ?? this.allCases,
         selectedZoneId: selectedZoneId ?? this.selectedZoneId,
         isLoading: isLoading ?? this.isLoading,
-        isAnalyzing: isAnalyzing ?? this.isAnalyzing,
+        isReporting: isReporting ?? this.isReporting,
       );
 }
 
-// ════════════════════════════════════════════════════════
-//  ZoneNotifier
-// ════════════════════════════════════════════════════════
+// ─── ZoneNotifier ─────────────────────────────────────────
 class ZoneNotifier extends Notifier<ZoneState> {
   @override
   ZoneState build() => ZoneState(
-        zones: _mockZones,
-        reports: _mockReports,
-        selectedZoneId: _mockZones.first.id,
+        zones: _mockZonesWithCases,
+        allCases: _mockCases,
+        selectedZoneId: _mockZonesWithCases.first.id,
       );
 
   void selectZone(String id) => state = state.copyWith(selectedZoneId: id);
 
   Future<void> refreshZones() async {
     state = state.copyWith(isLoading: true);
-    await Future.delayed(const Duration(seconds: 2));
+    await Future.delayed(const Duration(seconds: 1));
     state = state.copyWith(isLoading: false);
   }
 
-  Future<ZoneHealthReport?> analyzeZone(String zoneId) async {
-    state = state.copyWith(isAnalyzing: true);
-    await Future.delayed(const Duration(seconds: 3));
+  // ── الإبلاغ عن حالة جديدة ──────────────────────────────
+  Future<ReportedCase> reportCase({
+    required CaseType type,
+    required String titleAr,
+    required String titleEn,
+    required String descriptionAr,
+    required String descriptionEn,
+    required LatLng position,
+    required String locationNameAr,
+    required String locationNameEn,
+    required int affectedCount,
+    required CaseRiskLevel riskLevel,
+    List<String> precautionsAr = const [],
+    List<String> precautionsEn = const [],
+  }) async {
+    state = state.copyWith(isReporting: true);
+    await Future.delayed(const Duration(seconds: 1)); // محاكاة إرسال للخادم
 
-    final report = _mockReports.firstWhere(
-      (r) => r.zoneId == zoneId,
-      orElse: () => ZoneHealthReport(
-        zoneId: zoneId,
-        generatedAt: DateTime.now(),
-        weeklyNewCases: 45,
-        weeklyRecovered: 28,
-        reproductionNumber: 0.9,
-        aiAnalysisAr: 'الوضع الصحي مستقر. لا توجد مؤشرات على تفشي وبائي وشيك.',
-        aiAnalysisEn: 'Health situation stable. No indicators of imminent epidemic.',
-        recommendationsAr: ['الاستمرار بالمراقبة الدورية', 'تعزيز حملات التوعية الصحية'],
-        recommendationsEn: ['Continue periodic monitoring', 'Strengthen health awareness campaigns'],
-      ),
+    final newCase = ReportedCase(
+      id: 'case_${DateTime.now().millisecondsSinceEpoch}',
+      type: type,
+      titleAr: titleAr,
+      titleEn: titleEn,
+      descriptionAr: descriptionAr,
+      descriptionEn: descriptionEn,
+      position: position,
+      locationNameAr: locationNameAr,
+      locationNameEn: locationNameEn,
+      reportedAt: DateTime.now(),
+      affectedCount: affectedCount,
+      riskLevel: riskLevel,
+      isActive: true,
+      precautionsAr: precautionsAr,
+      precautionsEn: precautionsEn,
     );
 
-    final updatedReports = [...state.reports];
-    updatedReports.removeWhere((r) => r.zoneId == zoneId);
-    updatedReports.add(report);
+    // إضافة الحالة إلى القائمة
+    final updatedCases = [...state.allCases, newCase];
 
-    state = state.copyWith(isAnalyzing: false, reports: updatedReports);
-    return report;
+    // تحديث المناطق - استخدام _distance للمسافات
+    final updatedZones = state.zones.map((zone) {
+      // حساب المسافة بين مركز المنطقة وموقع الحالة
+      final distanceInMeters = _distance.as(
+        LengthUnit.Meter,
+        zone.center,
+        position,
+      );
+      final distanceInKm = distanceInMeters / 1000;
+      
+      // إذا كانت الحالة ضمن نطاق المنطقة
+      if (distanceInKm <= zone.radiusKm) {
+        return HealthZoneWithCases(
+          id: zone.id,
+          nameAr: zone.nameAr,
+          nameEn: zone.nameEn,
+          districtAr: zone.districtAr,
+          districtEn: zone.districtEn,
+          center: zone.center,
+          radiusKm: zone.radiusKm,
+          activeCases: [...zone.activeCases, newCase],
+          lastUpdated: DateTime.now(),
+        );
+      }
+      return zone;
+    }).toList();
+
+    state = state.copyWith(
+      allCases: updatedCases,
+      zones: updatedZones,
+      isReporting: false,
+    );
+
+    return newCase;
+  }
+
+  // ── حل حالة (إغلاقها) ──────────────────────────────────
+  void resolveCase(String caseId) {
+    final updatedCases = state.allCases.map((c) {
+      if (c.id == caseId) {
+        return ReportedCase(
+          id: c.id,
+          type: c.type,
+          titleAr: c.titleAr,
+          titleEn: c.titleEn,
+          descriptionAr: c.descriptionAr,
+          descriptionEn: c.descriptionEn,
+          position: c.position,
+          locationNameAr: c.locationNameAr,
+          locationNameEn: c.locationNameEn,
+          reportedAt: c.reportedAt,
+          affectedCount: c.affectedCount,
+          riskLevel: c.riskLevel,
+          isActive: false,
+          precautionsAr: c.precautionsAr,
+          precautionsEn: c.precautionsEn,
+        );
+      }
+      return c;
+    }).toList();
+
+    // تحديث المناطق (إزالة الحالة المغلقة)
+    final updatedZones = state.zones.map((zone) {
+      final activeInZone = updatedCases.where((c) {
+        if (!c.isActive) return false;
+        final distanceInMeters = _distance.as(
+          LengthUnit.Meter,
+          zone.center,
+          c.position,
+        );
+        final distanceInKm = distanceInMeters / 1000;
+        return distanceInKm <= zone.radiusKm;
+      }).toList();
+      
+      return HealthZoneWithCases(
+        id: zone.id,
+        nameAr: zone.nameAr,
+        nameEn: zone.nameEn,
+        districtAr: zone.districtAr,
+        districtEn: zone.districtEn,
+        center: zone.center,
+        radiusKm: zone.radiusKm,
+        activeCases: activeInZone,
+        lastUpdated: DateTime.now(),
+      );
+    }).toList();
+
+    state = state.copyWith(
+      allCases: updatedCases,
+      zones: updatedZones,
+    );
   }
 }
 
